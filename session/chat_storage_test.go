@@ -82,11 +82,9 @@ func TestEnsureAgentDir_Idempotent(t *testing.T) {
 		t.Fatalf("first EnsureAgentDir() error: %v", err)
 	}
 
-	// Manually mark bootstrapped in the file.
-	stateFile := filepath.Join(tmp, slug, "workspace-state.json")
-	bs, _ := json.Marshal(ChatWorkspaceState{Bootstrapped: true})
-	if err := os.WriteFile(stateFile, bs, 0600); err != nil {
-		t.Fatalf("failed to write state file: %v", err)
+	// Mark bootstrapped via the proper API.
+	if err := MarkBootstrapped(slug); err != nil {
+		t.Fatalf("MarkBootstrapped() error: %v", err)
 	}
 
 	// Second call must not overwrite the existing file.
@@ -94,9 +92,15 @@ func TestEnsureAgentDir_Idempotent(t *testing.T) {
 		t.Fatalf("second EnsureAgentDir() error: %v", err)
 	}
 
-	data, _ := os.ReadFile(stateFile)
+	stateFile := filepath.Join(tmp, slug, "workspace-state.json")
+	data, err := os.ReadFile(stateFile)
+	if err != nil {
+		t.Fatalf("failed to read state file: %v", err)
+	}
 	var state ChatWorkspaceState
-	_ = json.Unmarshal(data, &state)
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatalf("failed to parse workspace-state.json: %v", err)
+	}
 	if !state.Bootstrapped {
 		t.Error("EnsureAgentDir must not overwrite existing workspace-state.json")
 	}
