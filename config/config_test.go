@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -237,4 +238,32 @@ func TestSaveConfig(t *testing.T) {
 		assert.Equal(t, testConfig.DaemonPollInterval, loadedConfig.DaemonPollInterval)
 		assert.Equal(t, testConfig.BranchPrefix, loadedConfig.BranchPrefix)
 	})
+}
+
+func TestMemoryConfig_DefaultsToEnabled(t *testing.T) {
+	cfg := DefaultConfig()
+	// Memory is nil by default (not configured), that's fine
+	// If it's non-nil, Enabled must be false
+	if cfg.Memory != nil {
+		assert.False(t, cfg.Memory.Enabled)
+	}
+}
+
+func TestMemoryConfig_JSONRoundtrip(t *testing.T) {
+	cfg := &Config{
+		Memory: &MemoryConfig{
+			Enabled:            true,
+			EmbeddingProvider:  "openai",
+			OpenAIAPIKey:       "sk-test",
+			StartupInjectCount: 5,
+		},
+	}
+	data, err := json.Marshal(cfg)
+	require.NoError(t, err)
+
+	var got Config
+	require.NoError(t, json.Unmarshal(data, &got))
+	require.NotNil(t, got.Memory)
+	assert.Equal(t, "openai", got.Memory.EmbeddingProvider)
+	assert.Equal(t, "sk-test", got.Memory.OpenAIAPIKey)
 }

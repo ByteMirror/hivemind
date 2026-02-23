@@ -27,6 +27,26 @@ func GetConfigDir() (string, error) {
 	return filepath.Join(homeDir, ".hivemind"), nil
 }
 
+// MemoryConfig configures the IDE-wide memory system.
+type MemoryConfig struct {
+	// Enabled turns the memory system on/off. Default false until configured.
+	Enabled bool `json:"enabled"`
+	// EmbeddingProvider selects the embedding backend: "openai", "ollama", or "none".
+	// When "none" or unset, memory search falls back to keyword-only (FTS).
+	EmbeddingProvider string `json:"embedding_provider,omitempty"`
+	// OpenAIAPIKey is the API key for OpenAI embeddings.
+	OpenAIAPIKey string `json:"openai_api_key,omitempty"`
+	// OpenAIModel is the embedding model name. Default "text-embedding-3-small".
+	OpenAIModel string `json:"openai_model,omitempty"`
+	// OllamaURL is the Ollama server URL. Default "http://localhost:11434".
+	OllamaURL string `json:"ollama_url,omitempty"`
+	// OllamaModel is the Ollama model name. Default "nomic-embed-text".
+	OllamaModel string `json:"ollama_model,omitempty"`
+	// StartupInjectCount controls how many memory snippets are injected into
+	// CLAUDE.md when starting an agent. Default 5.
+	StartupInjectCount int `json:"startup_inject_count,omitempty"`
+}
+
 // Config represents the application configuration
 type Config struct {
 	// DefaultProgram is the default program to run in new instances
@@ -45,6 +65,8 @@ type Config struct {
 	// block pause/resume. Set to false if your repo has mandatory hooks
 	// (e.g. secret scanning).
 	SkipGitHooks *bool `json:"skip_git_hooks,omitempty"`
+	// Memory configures the IDE-wide memory system.
+	Memory *MemoryConfig `json:"memory,omitempty"`
 }
 
 // DefaultConfig returns the default configuration
