@@ -1,6 +1,7 @@
 package session
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -111,6 +112,50 @@ func MarkBootstrapped(slug string) error {
 	stateFile := filepath.Join(agentDir, workspaceStateFile)
 	if err := config.AtomicWriteFile(stateFile, data, 0600); err != nil {
 		return fmt.Errorf("chat storage: write workspace-state.json for %q: %w", slug, err)
+	}
+
+	return nil
+}
+
+// templateFS holds the embedded personality template files from session/templates/.
+//
+//go:embed templates/*
+var templateFS embed.FS
+
+// CopyTemplatesToAgentDir copies each file from the embedded templates directory
+// into the agent's personality directory identified by slug. Files that already
+// exist on disk are skipped so that user edits are never overwritten.
+func CopyTemplatesToAgentDir(slug string) error {
+	agentDir, err := GetAgentPersonalityDir(slug)
+	if err != nil {
+		return err
+	}
+
+	entries, err := templateFS.ReadDir("templates")
+	if err != nil {
+		return fmt.Errorf("chat storage: read embedded templates: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		dest := filepath.Join(agentDir, entry.Name())
+
+		// Skip if the file already exists — never overwrite user edits.
+		if _, err := os.Stat(dest); err == nil {
+			continue
+		}
+
+		data, err := templateFS.ReadFile("templates/" + entry.Name())
+		if err != nil {
+			return fmt.Errorf("chat storage: read template %q: %w", entry.Name(), err)
+		}
+
+		if err := config.AtomicWriteFile(dest, data, 0600); err != nil {
+			return fmt.Errorf("chat storage: write template %q to %q: %w", entry.Name(), dest, err)
+		}
 	}
 
 	return nil

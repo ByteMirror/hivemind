@@ -138,3 +138,51 @@ func TestReadWorkspaceState(t *testing.T) {
 		t.Error("Bootstrapped should be true after MarkBootstrapped()")
 	}
 }
+
+func TestCopyTemplatesToAgentDir(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HIVEMIND_CHATS_DIR_OVERRIDE", tmp)
+
+	const slug = "aria"
+
+	if err := EnsureAgentDir(slug); err != nil {
+		t.Fatalf("EnsureAgentDir() error: %v", err)
+	}
+
+	if err := CopyTemplatesToAgentDir(slug); err != nil {
+		t.Fatalf("CopyTemplatesToAgentDir() unexpected error: %v", err)
+	}
+
+	agentDir := filepath.Join(tmp, slug)
+	expectedFiles := []string{"BOOTSTRAP.md", "SOUL.md", "IDENTITY.md", "USER.md"}
+	for _, name := range expectedFiles {
+		path := filepath.Join(agentDir, name)
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Errorf("expected template file %q to exist: %v", name, err)
+			continue
+		}
+		if info.Size() == 0 {
+			t.Errorf("template file %q is empty", name)
+		}
+	}
+
+	// Idempotency: modify SOUL.md, call again, verify user edit is preserved.
+	soulPath := filepath.Join(agentDir, "SOUL.md")
+	userEdit := []byte("My custom soul content — do not overwrite.")
+	if err := os.WriteFile(soulPath, userEdit, 0600); err != nil {
+		t.Fatalf("failed to write user edit to SOUL.md: %v", err)
+	}
+
+	if err := CopyTemplatesToAgentDir(slug); err != nil {
+		t.Fatalf("second CopyTemplatesToAgentDir() unexpected error: %v", err)
+	}
+
+	got, err := os.ReadFile(soulPath)
+	if err != nil {
+		t.Fatalf("failed to read SOUL.md after second call: %v", err)
+	}
+	if string(got) != string(userEdit) {
+		t.Errorf("SOUL.md user edit was overwritten: got %q, want %q", string(got), string(userEdit))
+	}
+}
