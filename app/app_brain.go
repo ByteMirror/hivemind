@@ -131,9 +131,12 @@ func (m *home) handleActionCreateInstance(action brain.ActionRequest) (tea.Model
 		}
 
 		var startErr error
-		if topicObj != nil && topicObj.SharedWorktree && topicObj.Started() {
+		switch {
+		case topicObj != nil && topicObj.IsSharedWorktree() && topicObj.Started():
 			startErr = instance.StartInSharedWorktree(topicObj.GetGitWorktree(), topicObj.Branch)
-		} else {
+		case topicObj != nil && topicObj.IsMainRepo():
+			startErr = instance.StartInMainRepo()
+		default:
 			startErr = instance.Start(true)
 		}
 
