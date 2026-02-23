@@ -264,7 +264,7 @@ func (m *home) handleRightClick(x, y, contentY int) (tea.Model, tea.Cmd) {
 			{Label: "Delete topic (ungroup only)", Action: "delete_topic"},
 			{Label: "Rename topic", Action: "rename_topic"},
 		}
-		if topic.SharedWorktree {
+		if topic.IsSharedWorktree() {
 			items = append(items, overlay.ContextMenuItem{Label: "Push branch", Action: "push_topic"})
 		}
 		m.contextMenu = overlay.NewContextMenu(x, y, items)
@@ -487,9 +487,12 @@ func (m *home) handleNewInstanceKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Start instance asynchronously
 		startCmd := func() tea.Msg {
 			var startErr error
-			if topic != nil && topic.SharedWorktree && topic.Started() {
+			switch {
+			case topic != nil && topic.IsSharedWorktree() && topic.Started():
 				startErr = instance.StartInSharedWorktree(topic.GetGitWorktree(), topic.Branch)
-			} else {
+			case topic != nil && topic.IsMainRepo():
+				startErr = instance.StartInMainRepo()
+			default:
 				startErr = instance.Start(true)
 			}
 			if startErr != nil {
@@ -983,12 +986,16 @@ func (m *home) handleNewTopicKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.textInputOverlay = nil
 				return m, m.handleError(fmt.Errorf("topic name cannot be empty"))
 			}
-			// Show shared worktree confirmation
+			// Show worktree mode picker
 			m.textInputOverlay = nil
-			m.confirmationOverlay = overlay.NewConfirmationOverlay(
-				fmt.Sprintf("Create shared worktree for topic '%s'?\nAll instances will share one branch and directory.", m.pendingTopicName),
+			m.pickerOverlay = overlay.NewPickerOverlay(
+				fmt.Sprintf("Worktree mode for '%s'", m.pendingTopicName),
+				[]string{
+					"Per-instance worktrees",
+					"Shared worktree",
+					"Main repo (no worktree)",
+				},
 			)
-			m.confirmationOverlay.SetWidth(60)
 			m.state = stateNewTopicConfirm
 			return m, nil
 		}
@@ -1003,29 +1010,47 @@ func (m *home) handleNewTopicKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *home) handleNewTopicConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.confirmationOverlay == nil {
+	if m.pickerOverlay == nil {
 		m.state = stateDefault
 		return m, nil
 	}
-	shouldClose := m.confirmationOverlay.HandleKeyPress(msg)
+	shouldClose := m.pickerOverlay.HandleKeyPress(msg)
 	if !shouldClose {
-		return m, nil // No decision yet
+		return m, nil
 	}
 
-	// Determine if confirmed (y) or cancelled (n/esc) based on which key was pressed
-	shared := msg.String() == m.confirmationOverlay.ConfirmKey
+	if !m.pickerOverlay.IsSubmitted() {
+		// Cancelled
+		m.pickerOverlay = nil
+		m.pendingTopicName = ""
+		m.pendingTopicRepoPath = ""
+		m.state = stateDefault
+		m.menu.SetState(ui.StateDefault)
+		return m, tea.WindowSize()
+	}
+
+	var mode session.TopicWorktreeMode
+	switch m.pickerOverlay.Value() {
+	case "Shared worktree":
+		mode = session.TopicWorktreeModeShared
+	case "Main repo (no worktree)":
+		mode = session.TopicWorktreeModeMainRepo
+	default:
+		mode = session.TopicWorktreeModePerInstance
+	}
+	m.pickerOverlay = nil
+
 	topicRepoPath := m.pendingTopicRepoPath
 	if topicRepoPath == "" {
 		topicRepoPath = m.activeRepoPaths[0]
 	}
 	topic := session.NewTopic(session.TopicOptions{
-		Name:           m.pendingTopicName,
-		SharedWorktree: shared,
-		Path:           topicRepoPath,
+		Name:         m.pendingTopicName,
+		WorktreeMode: mode,
+		Path:         topicRepoPath,
 	})
 	if err := topic.Setup(); err != nil {
 		m.pendingTopicName = ""
-		m.confirmationOverlay = nil
 		m.state = stateDefault
 		m.menu.SetState(ui.StateDefault)
 		return m, m.handleError(err)
@@ -1038,7 +1063,6 @@ func (m *home) handleNewTopicConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	m.pendingTopicName = ""
 	m.pendingTopicRepoPath = ""
-	m.confirmationOverlay = nil
 	m.state = stateDefault
 	m.menu.SetState(ui.StateDefault)
 	return m, tea.WindowSize()
@@ -1553,7 +1577,7 @@ func (m *home) handleDefaultKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Can't move shared-worktree instances (they're tied to their topic's worktree)
 		if selected.TopicName != "" {
 			for _, t := range m.topics {
-				if t.Name == selected.TopicName && t.SharedWorktree {
+				if t.Name == selected.TopicName && t.IsSharedWorktree() {
 					return m, m.handleError(fmt.Errorf("cannot move instances in shared-worktree topics"))
 				}
 			}
