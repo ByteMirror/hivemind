@@ -85,6 +85,8 @@ type Instance struct {
 
 	// sharedWorktree is true if this instance uses a topic's shared worktree (should not clean it up).
 	sharedWorktree bool
+	// mainRepo is true if this instance runs directly in the repo directory (no worktree).
+	mainRepo bool
 	// LoadingStage tracks the current startup progress. Exported so the UI can read it.
 	LoadingStage int
 	// LoadingTotal is the total number of startup stages.

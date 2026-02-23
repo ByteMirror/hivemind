@@ -34,26 +34,71 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("#F0A868")).
 			Padding(1, 2)
+
+	autoColumnHeaderStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("#F0A868")).
+				Underline(true)
+
+	autoDividerStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#444444"))
 )
 
-// RenderAutomationsList renders the automations manager screen as a table.
-func RenderAutomationsList(automations []*config.Automation, selectedIdx int, width int) string {
+// RenderAutomationsList renders the automations manager as a large modal.
+// When form is non-nil the create/edit form is shown instead of the list.
+func RenderAutomationsList(automations []*config.Automation, selectedIdx int, width int, height int, form *AutomationForm) string {
+	borderFrame := autoBorderStyle.GetHorizontalFrameSize()
+	vertFrame := autoBorderStyle.GetVerticalFrameSize()
+	innerWidth := width - borderFrame
+	innerHeight := height - vertFrame
+	if innerWidth < 20 {
+		innerWidth = 20
+	}
+	if innerHeight < 5 {
+		innerHeight = 5
+	}
+
+	if form != nil {
+		content := form.Render(innerWidth, innerHeight)
+		return autoBorderStyle.Width(innerWidth).Height(innerHeight).Render(content)
+	}
+
+	return renderList(automations, selectedIdx, innerWidth, innerHeight)
+}
+
+func renderList(automations []*config.Automation, selectedIdx int, innerWidth, innerHeight int) string {
 	var sb strings.Builder
 
-	sb.WriteString(autoHeaderStyle.Render("Automations") + "\n")
-	sb.WriteString(autoHintStyle.Render("n: new  e: toggle  r: run now  d: delete  esc: back") + "\n\n")
+	// Header
+	sb.WriteString(autoHeaderStyle.Render("⚡ Automations") + "\n")
+	sb.WriteString(autoHintStyle.Render("n new  e edit  t toggle  r run now  d delete  esc close") + "\n")
+	sb.WriteString(autoDividerStyle.Render(strings.Repeat("─", innerWidth)) + "\n\n")
 
 	if len(automations) == 0 {
-		sb.WriteString(autoDisabledStyle.Render("No automations yet. Press 'n' to create one."))
-		return autoBorderStyle.Width(width - 4).Render(sb.String())
+		empty := autoDisabledStyle.Render("No automations yet. Press 'n' to create one.\n\nAutomations let you schedule recurring agent tasks — e.g. run a daily\ncode review, sync documentation, or monitor for regressions.")
+		sb.WriteString(empty)
+	} else {
+		col := renderColumnHeader(innerWidth)
+		sb.WriteString(col + "\n")
+		sb.WriteString(autoDividerStyle.Render(strings.Repeat("─", innerWidth)) + "\n")
+
+		for i, auto := range automations {
+			row := renderAutomationRow(auto, i == selectedIdx, innerWidth)
+			sb.WriteString(row + "\n")
+		}
 	}
 
-	for i, auto := range automations {
-		row := renderAutomationRow(auto, i == selectedIdx, width)
-		sb.WriteString(row + "\n")
-	}
+	return autoBorderStyle.Width(innerWidth).Height(innerHeight).Render(sb.String())
+}
 
-	return autoBorderStyle.Width(width - 4).Render(sb.String())
+func renderColumnHeader(width int) string {
+	name := fmt.Sprintf("%-28s", "NAME")
+	schedule := fmt.Sprintf("%-16s", "SCHEDULE")
+	nextRun := fmt.Sprintf("%-12s", "NEXT RUN")
+	status := "STATUS"
+	row := fmt.Sprintf("  %s  %s  %s  %s", name, schedule, nextRun, status)
+	_ = width
+	return autoColumnHeaderStyle.Render(row)
 }
 
 // renderAutomationRow renders a single automation row.
@@ -69,20 +114,36 @@ func renderAutomationRow(auto *config.Automation, selected bool, width int) stri
 	}
 
 	nextRunStr := formatNextRun(auto.NextRun)
-	scheduleStr := auto.Schedule
 
-	// Truncate name if needed.
 	name := auto.Name
-	maxNameLen := 24
-	if len(name) > maxNameLen {
-		name = name[:maxNameLen-1] + "…"
+	if len(name) > 26 {
+		name = name[:25] + "…"
+	}
+	schedule := auto.Schedule
+	if len(schedule) > 14 {
+		schedule = schedule[:13] + "…"
 	}
 
-	row := fmt.Sprintf("  %s  %-26s  %-14s  next: %s",
-		enabledMark, name, scheduleStr, nextRunStr)
+	row := fmt.Sprintf("  %s %-27s  %-16s  %-12s  %s",
+		enabledMark, name, schedule, nextRunStr,
+		enabledText(auto.Enabled))
 
-	_ = width // width reserved for future truncation
+	if selected {
+		// Pad to full width so the highlight bar spans the row
+		visLen := len([]rune(row))
+		if visLen < width {
+			row += strings.Repeat(" ", width-visLen)
+		}
+	}
+
 	return rowStyle.Render(row)
+}
+
+func enabledText(enabled bool) string {
+	if enabled {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e")).Render("enabled")
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Render("disabled")
 }
 
 // formatNextRun formats the NextRun time into a human-readable relative string.

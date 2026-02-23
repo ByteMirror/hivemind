@@ -62,6 +62,7 @@ const (
 	KeyCommandPalette // Key for opening command palette
 	KeyMemoryBrowser  // Key for opening the memory file browser
 
+	KeyAutomations    // Key for opening the automations manager
 	KeySidebarCodeTab // Key for switching sidebar to Code tab
 	KeySidebarChatTab // Key for switching sidebar to Chat tab
 
@@ -114,6 +115,7 @@ var GlobalKeyStringsMap = map[string]KeyName{
 	"y":           KeyAutoYes,
 	"ctrl+p":      KeyCommandPalette,
 	"M":           KeyMemoryBrowser,
+	"A":           KeyAutomations,
 	"[":           KeySidebarCodeTab,
 	"]":           KeySidebarChatTab,
 }
@@ -267,6 +269,10 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	KeyMemoryBrowser: key.NewBinding(
 		key.WithKeys("M"),
 		key.WithHelp("M", "memory"),
+	),
+	KeyAutomations: key.NewBinding(
+		key.WithKeys("A"),
+		key.WithHelp("A", "automations"),
 	),
 	KeySidebarCodeTab: key.NewBinding(
 		key.WithKeys("["),
