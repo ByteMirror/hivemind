@@ -483,6 +483,7 @@ func (m *home) Init() tea.Cmd {
 			return previewTickMsg{}
 		},
 		tickUpdateMetadataCmd,
+		automationCheckCmd,
 		m.toastTickCmd(),
 	}
 
@@ -655,6 +656,10 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.metadataFetching = false
 		m.updateSidebarItems()
 		return m, tickUpdateMetadataCmd
+	case automationCheckMsg:
+		cmds := m.checkDueAutomations()
+		cmds = append(cmds, automationCheckCmd)
+		return m, tea.Batch(cmds...)
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 	case tea.KeyMsg:
@@ -907,6 +912,9 @@ type terminalTabTickMsg struct{}
 
 type instanceChangedMsg struct{}
 
+// automationCheckMsg triggers a periodic check of due automations.
+type automationCheckMsg struct{}
+
 // instanceStartedMsg is sent when an async instance startup completes.
 type instanceStartedMsg struct {
 	instance *session.Instance
@@ -946,6 +954,98 @@ type brainInstanceFailedMsg struct {
 var tickUpdateMetadataCmd = func() tea.Msg {
 	time.Sleep(500 * time.Millisecond)
 	return tickUpdateMetadataMessage{}
+}
+
+// automationCheckCmd checks for due automations every 10 seconds.
+var automationCheckCmd = func() tea.Msg {
+	time.Sleep(10 * time.Second)
+	return automationCheckMsg{}
+}
+
+// checkDueAutomations checks m.automations for any that are due and spawns instances.
+func (m *home) checkDueAutomations() []tea.Cmd {
+	now := time.Now()
+	var cmds []tea.Cmd
+	changed := false
+
+	for _, auto := range m.automations {
+		if !auto.Enabled || !now.After(auto.NextRun) {
+			continue
+		}
+
+		cmd := m.spawnAutomationInstance(auto)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+
+		auto.LastRun = now
+		next, err := config.NextRunTime(auto.Schedule, now, now)
+		if err != nil {
+			next = now.Add(time.Hour)
+		}
+		auto.NextRun = next
+		changed = true
+	}
+
+	if changed {
+		if err := config.SaveAutomations(m.automations); err != nil {
+			log.WarningLog.Printf("failed to save automations after trigger: %v", err)
+		}
+	}
+	return cmds
+}
+
+// spawnAutomationInstance creates and starts an instance for the given automation.
+// Returns a tea.Cmd that starts the instance asynchronously, or nil on error.
+func (m *home) spawnAutomationInstance(auto *config.Automation) tea.Cmd {
+	title := fmt.Sprintf("%s-%d", auto.Name, time.Now().Unix())
+
+	if len(m.allInstances) >= GlobalInstanceLimit {
+		log.WarningLog.Printf("automation %q: instance limit reached", auto.Name)
+		return nil
+	}
+	if m.findInstanceByTitle(title) != nil {
+		log.WarningLog.Printf("automation %q: duplicate title %q", auto.Name, title)
+		return nil
+	}
+
+	instance, err := session.NewInstance(session.InstanceOptions{
+		Title:           title,
+		Path:            m.repoPathForNewInstance(),
+		Program:         m.program,
+		SkipPermissions: true,
+		AutomationID:    auto.ID,
+	})
+	if err != nil {
+		log.ErrorLog.Printf("automation %q: failed to create instance: %v", auto.Name, err)
+		return nil
+	}
+
+	finalizer := m.list.AddInstance(instance)
+	m.toastManager.Info(fmt.Sprintf("Automation %q triggered", auto.Name))
+
+	prompt := auto.Instructions
+	brainSrv := m.brainServer
+	return func() tea.Msg {
+		if startErr := instance.Start(true); startErr != nil {
+			return brainInstanceFailedMsg{title: instance.Title}
+		}
+		if prompt != "" {
+			time.Sleep(2 * time.Second)
+			instance.SendPrompt(prompt)
+		}
+		if brainSrv != nil {
+			brainSrv.PushEvent(brain.Event{
+				Type:     brain.EventInstanceCreated,
+				Source:   instance.Title,
+				RepoPath: instance.GetRepoPath(),
+				Data: map[string]any{
+					"automation_id": auto.ID,
+				},
+			})
+		}
+		return brainInstanceStartedMsg{instance: instance, finalizer: finalizer}
+	}
 }
 
 // pushStatusEvent emits an EventInstanceStatusChanged when the instance transitions

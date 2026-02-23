@@ -110,8 +110,9 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 		}()
 		if memMgr := getMemoryManager(); memMgr != nil {
 			count := getMemoryInjectCount()
+			repoMgr, _ := GetOrCreateRepoManager(filepath.Base(wtPath))
 			go func() {
-				if err := injectMemoryContext(wtPath, memMgr, count); err != nil {
+				if err := InjectMemoryContext(wtPath, memMgr, repoMgr, count); err != nil {
 					log.WarningLog.Printf("memory inject: %v", err)
 				}
 			}()
@@ -205,8 +206,9 @@ func (i *Instance) StartInSharedWorktree(worktree *git.GitWorktree, branch strin
 		}()
 		if memMgr := getMemoryManager(); memMgr != nil {
 			count := getMemoryInjectCount()
+			repoMgr, _ := GetOrCreateRepoManager(filepath.Base(sharedWtPath))
 			go func() {
-				if err := injectMemoryContext(sharedWtPath, memMgr, count); err != nil {
+				if err := InjectMemoryContext(sharedWtPath, memMgr, repoMgr, count); err != nil {
 					log.WarningLog.Printf("memory inject: %v", err)
 				}
 			}()
@@ -449,8 +451,9 @@ func (i *Instance) Resume() error {
 	if memMgr := getMemoryManager(); memMgr != nil {
 		wtPath := i.gitWorktree.GetWorktreePath()
 		count := getMemoryInjectCount()
+		repoMgr, _ := GetOrCreateRepoManager(filepath.Base(wtPath))
 		go func() {
-			if err := injectMemoryContext(wtPath, memMgr, count); err != nil {
+			if err := InjectMemoryContext(wtPath, memMgr, repoMgr, count); err != nil {
 				log.WarningLog.Printf("memory inject: %v", err)
 			}
 		}()
@@ -537,8 +540,9 @@ func (i *Instance) Restart() error {
 	}()
 	if memMgr := getMemoryManager(); memMgr != nil {
 		count := getMemoryInjectCount()
+		repoMgr, _ := GetOrCreateRepoManager(filepath.Base(worktreePath))
 		go func() {
-			if err := injectMemoryContext(worktreePath, memMgr, count); err != nil {
+			if err := InjectMemoryContext(worktreePath, memMgr, repoMgr, count); err != nil {
 				log.WarningLog.Printf("memory inject: %v", err)
 			}
 		}()

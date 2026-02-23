@@ -14,11 +14,11 @@ const (
 	memoryInjectFooter = "<!-- hivemind-memory-end -->"
 )
 
-// injectMemoryContext queries the IDE memory and appends/replaces the
-// Hivemind Memory section in the worktree's CLAUDE.md.
-// This is called on every instance start so context is always fresh.
-func injectMemoryContext(worktreePath string, mgr *memory.Manager, count int) error {
-	if mgr == nil {
+// InjectMemoryContext is the primary injection function called on agent start/resume.
+// globalMgr must be non-nil; repoMgr may be nil if no repo memory dir exists yet.
+// worktreePath is used to derive the repo name for the section heading and repo query.
+func InjectMemoryContext(worktreePath string, globalMgr *memory.Manager, repoMgr *memory.Manager, count int) error {
+	if globalMgr == nil {
 		return nil
 	}
 	if count <= 0 {
@@ -26,27 +26,51 @@ func injectMemoryContext(worktreePath string, mgr *memory.Manager, count int) er
 	}
 
 	// Gather tree.
-	treeEntries, _ := mgr.Tree()
+	treeEntries, _ := globalMgr.Tree()
 
 	// Gather system/ file contents.
 	budget := getSystemBudget()
-	systemFiles, _ := mgr.SystemFiles(budget)
+	systemFiles, _ := globalMgr.SystemFiles(budget)
 
-	// Query memory with a broad context query.
-	query := filepath.Base(worktreePath) + " project setup preferences environment"
-	results, err := mgr.Search(query, memory.SearchOpts{MaxResults: count})
+	// Query global manager for cross-project / user-environment context.
+	globalResults, err := globalMgr.Search(
+		"global setup preferences environment hardware OS",
+		memory.SearchOpts{MaxResults: count},
+	)
 	if err != nil {
-		return fmt.Errorf("memory query for CLAUDE.md: %w", err)
+		return fmt.Errorf("memory query (global) for CLAUDE.md: %w", err)
 	}
 
-	section := buildMemorySection(treeEntries, systemFiles, results)
+	// Query repo manager for project-specific context (if available).
+	var repoResults []memory.SearchResult
+	if repoMgr != nil {
+		repoSlug := filepath.Base(worktreePath)
+		repoResults, err = repoMgr.Search(
+			repoSlug+" project architecture decisions",
+			memory.SearchOpts{MaxResults: count},
+		)
+		if err != nil {
+			return fmt.Errorf("memory query (repo) for CLAUDE.md: %w", err)
+		}
+	}
+
+	repoName := filepath.Base(worktreePath)
+	section := buildMemorySection(treeEntries, systemFiles, globalResults, repoResults, repoName)
 
 	claudeMDPath := filepath.Join(worktreePath, "CLAUDE.md")
 	return upsertMemorySection(claudeMDPath, section)
 }
 
+// injectMemoryContext is the legacy unexported wrapper preserved for
+// any internal callers that have not yet been migrated.
+// Deprecated: use InjectMemoryContext directly.
+func injectMemoryContext(worktreePath string, mgr *memory.Manager, count int) error {
+	return InjectMemoryContext(worktreePath, mgr, nil, count)
+}
+
 // buildMemorySection formats the memory context into a Markdown section.
-func buildMemorySection(tree []memory.TreeEntry, systemFiles map[string]string, results []memory.SearchResult) string {
+// It combines tree view, system files, and global/repo search results.
+func buildMemorySection(tree []memory.TreeEntry, systemFiles map[string]string, globalResults []memory.SearchResult, repoResults []memory.SearchResult, repoName string) string {
 	var b strings.Builder
 	b.WriteString(memoryInjectHeader + "\n")
 	b.WriteString("## Hivemind Memory\n\n")
@@ -54,15 +78,23 @@ func buildMemorySection(tree []memory.TreeEntry, systemFiles map[string]string, 
 
 	b.WriteString("### Rules\n\n")
 	b.WriteString("- **Before answering** any question about the user's preferences, setup, past decisions, or active projects: call `memory_search` first.\n")
-	b.WriteString("- **After every session** where you learn something durable: call `memory_write` to persist it.\n")
-	b.WriteString("- Write **stable facts** (hardware, OS, global preferences) with `scope=\"global\"` — this writes to `system/global.md` which is always in agent context. Write **project decisions** with `scope=\"repo\"` (dated files default to repo).\n")
-	b.WriteString("- **When asked to write memory at session end**: Do it immediately. Call memory_write with a concise summary of: (1) what was built/changed, (2) key decisions made, (3) any user preferences expressed.\n\n")
+	b.WriteString("- **After completing any significant task** (implementing a feature, fixing a bug, making an architectural decision): call `memory_write` immediately. Do not wait to be asked.\n")
+	b.WriteString("- **At the end of every working session**: call `memory_write` to record what was built, decisions made, and any user preferences observed. This is mandatory.\n")
+	b.WriteString("- Write **stable facts** (hardware, OS, global preferences) to `global.md` using `scope=\"global\"`. Write **project decisions** with `scope=\"repo\"` (default for dated files).\n")
+	b.WriteString("- **When asked to write memory**: Do it immediately without asking for confirmation. Call memory_write with a concise summary of: (1) what was built/changed, (2) key decisions made, (3) any user preferences expressed.\n\n")
+
+	b.WriteString("### What is worth writing to memory\n\n")
+	b.WriteString("- User's OS, hardware, terminal and editor setup\n")
+	b.WriteString("- API keys, services, and credentials configured\n")
+	b.WriteString("- Project tech stack decisions and the reasoning behind them\n")
+	b.WriteString("- Recurring patterns the user likes or dislikes\n")
+	b.WriteString("- Anything you had to look up or figure out that the user will likely ask again\n\n")
 
 	b.WriteString("### Tools\n\n")
 	b.WriteString("| Tool | When to use |\n")
 	b.WriteString("|------|-------------|\n")
 	b.WriteString("| `memory_search(query)` | Start of session, before answering questions about prior context |\n")
-	b.WriteString("| `memory_write(content, file?, scope?)` | scope=\"global\" writes to system/global.md; scope=\"repo\" for project decisions; no scope appends to daily file |\n")
+	b.WriteString("| `memory_write(content, file?, scope?)` | scope=\"repo\" for this project's decisions; scope=\"global\" for user preferences/hardware |\n")
 	b.WriteString("| `memory_read(path)` | Read full file body (frontmatter stripped) |\n")
 	b.WriteString("| `memory_append(path, content)` | Append content to an existing memory file |\n")
 	b.WriteString("| `memory_get(path, from?, lines?)` | Read specific lines from a memory file |\n")
@@ -92,12 +124,22 @@ func buildMemorySection(tree []memory.TreeEntry, systemFiles map[string]string, 
 		}
 	}
 
-	// Search result snippets.
-	if len(results) > 0 {
-		b.WriteString("### Relevant context for this session\n\n")
-		for _, r := range results {
+	b.WriteString("### Global context\n\n")
+	if len(globalResults) > 0 {
+		for _, r := range globalResults {
 			b.WriteString(fmt.Sprintf("**[%s L%d]** %s\n\n", r.Path, r.StartLine, r.Snippet))
 		}
+	} else {
+		b.WriteString("*(no global memory yet)*\n\n")
+	}
+
+	b.WriteString(fmt.Sprintf("### Repo context (%s)\n\n", repoName))
+	if len(repoResults) > 0 {
+		for _, r := range repoResults {
+			b.WriteString(fmt.Sprintf("**[%s L%d]** %s\n\n", r.Path, r.StartLine, r.Snippet))
+		}
+	} else {
+		b.WriteString("*(no repo memory yet)*\n\n")
 	}
 
 	b.WriteString(memoryInjectFooter + "\n")

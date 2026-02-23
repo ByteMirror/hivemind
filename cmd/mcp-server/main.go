@@ -70,9 +70,22 @@ func main() {
 		}
 	}
 
+	// Create repo-scoped memory manager when memory is enabled and a repo path is known.
+	var repoMemMgr *memory.Manager
+	if memMgr != nil && repoPath != "" {
+		repoSlug := filepath.Base(repoPath)
+		repoDir := filepath.Join(memMgr.Dir(), "repos", repoSlug)
+		if rMgr, err := memory.NewManager(repoDir, nil); err != nil {
+			hivemindmcp.Log("repo memory init failed for %q: %v", repoSlug, err)
+		} else {
+			repoMemMgr = rMgr
+			defer repoMemMgr.Close()
+		}
+	}
+
 	hivemindmcp.Log("starting: hivemindDir=%s instanceID=%s repoPath=%s tier=%d", hivemindDir, instanceID, repoPath, tier)
 
-	srv := hivemindmcp.NewHivemindMCPServer(brainClient, hivemindDir, instanceID, repoPath, tier, memMgr)
+	srv := hivemindmcp.NewHivemindMCPServer(brainClient, hivemindDir, instanceID, repoPath, tier, memMgr, repoMemMgr)
 	if err := srv.Serve(); err != nil {
 		hivemindmcp.Log("fatal: %v", err)
 		fmt.Fprintf(os.Stderr, "hivemind-mcp: %v\n", err)

@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ByteMirror/hivemind/brain"
 	"github.com/ByteMirror/hivemind/config"
 	"github.com/ByteMirror/hivemind/keys"
 	"github.com/ByteMirror/hivemind/log"
@@ -2077,21 +2076,20 @@ func (m *home) handleAutomationsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		auto := m.automations[m.autoSelectedIdx]
-		if m.brainServer == nil {
-			return m, m.handleError(fmt.Errorf("brain server not available"))
+		cmd := m.spawnAutomationInstance(auto)
+		if cmd == nil {
+			return m, m.handleError(fmt.Errorf("failed to spawn automation instance"))
 		}
-		skipPerms := true
-		params := brain.CreateInstanceParams{
-			Title:           fmt.Sprintf("%s-%d", auto.Name, time.Now().Unix()),
-			Prompt:          auto.Instructions,
-			SkipPermissions: &skipPerms,
-			AutomationID:    auto.ID,
+		// Update last run and next run.
+		now := time.Now()
+		auto.LastRun = now
+		if next, err := config.NextRunTime(auto.Schedule, now, now); err == nil {
+			auto.NextRun = next
 		}
-		if err := m.brainServer.CreateInstanceDirect(params); err != nil {
-			return m, m.handleError(fmt.Errorf("failed to run automation: %w", err))
+		if err := config.SaveAutomations(m.automations); err != nil {
+			log.ErrorLog.Printf("failed to save automations: %v", err)
 		}
-		m.toastManager.Info(fmt.Sprintf("Automation %q triggered", auto.Name))
-		return m, m.toastTickCmd()
+		return m, tea.Batch(cmd, m.toastTickCmd())
 
 	case "d":
 		// Delete selected automation with confirmation.
@@ -2147,8 +2145,14 @@ func (m *home) handleNewAutomationKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Editing existing automation.
 		auto := m.automations[m.autoEditIdx]
 		auto.Name = name
-		auto.Schedule = schedule
 		auto.Instructions = instructions
+		// Recompute NextRun when the schedule changes.
+		if auto.Schedule != schedule {
+			auto.Schedule = schedule
+			if next, err := config.NextRunTime(schedule, auto.LastRun, time.Now()); err == nil {
+				auto.NextRun = next
+			}
+		}
 		if err := config.SaveAutomations(m.automations); err != nil {
 			return m, m.handleError(err)
 		}

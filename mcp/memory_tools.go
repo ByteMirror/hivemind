@@ -4,45 +4,66 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/ByteMirror/hivemind/memory"
 	gomcp "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
+// datedFileRe matches YYYY-MM-DD.md filenames.
+var datedFileRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}\.md$`)
+
+// resolveMemoryScope returns the Manager to use for a write operation.
+// scope may be "global", "repo", or "" (auto-detect from filename).
+// repoMgr may be nil if no repo-specific manager is available.
+func resolveMemoryScope(scope, file string, globalMgr, repoMgr *memory.Manager) *memory.Manager {
+	switch strings.ToLower(scope) {
+	case "global":
+		return globalMgr
+	case "repo":
+		if repoMgr != nil {
+			return repoMgr
+		}
+		return globalMgr
+	default:
+		// Auto-detect: dated files (YYYY-MM-DD.md or empty → today's date) → repo;
+		// named files (global.md, MEMORY.md, etc.) → global.
+		if file == "" || datedFileRe.MatchString(filepath.Base(file)) {
+			if repoMgr != nil {
+				return repoMgr
+			}
+		}
+		return globalMgr
+	}
+}
+
 // handleMemoryWrite saves a fact to the IDE-wide memory store.
-// Backward compatible: no path = append to YYYY-MM-DD.md. With path = overwrite.
-func handleMemoryWrite(mgr *memory.Manager) mcpserver.ToolHandlerFunc {
+// scope="global" writes to globalMgr (defaulting to system/global.md); scope="repo" (or dated filenames) writes to repoMgr.
+func handleMemoryWrite(globalMgr *memory.Manager, repoMgr *memory.Manager) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
 		Log("tool call: memory_write")
 		content := req.GetString("content", "")
+		file := req.GetString("file", "")
+		scope := req.GetString("scope", "")
 		if content == "" {
 			return gomcp.NewToolResultError("missing required parameter: content"), nil
 		}
 
-		path := req.GetString("file", "")
-		scope := req.GetString("scope", "")
-		commitMsg := req.GetString("commit_message", "")
-
-		// Resolve scope when no explicit file path is given.
-		if path == "" && scope == "global" {
-			path = "system/global.md"
+		// When scope is global and no explicit file, default to system/global.md
+		// so it's always injected into agent context.
+		mgr := resolveMemoryScope(scope, file, globalMgr, repoMgr)
+		if file == "" && strings.ToLower(scope) == "global" {
+			file = "system/global.md"
 		}
 
-		if path != "" {
-			// Create/overwrite specific file.
-			if err := mgr.WriteFile(path, content, commitMsg); err != nil {
-				Log("memory_write error: %v", err)
-				return gomcp.NewToolResultError("failed to write memory: " + err.Error()), nil
-			}
-		} else {
-			// Default: append to daily file (YYYY-MM-DD.md).
-			if err := mgr.Write(content, ""); err != nil {
-				Log("memory_write error: %v", err)
-				return gomcp.NewToolResultError("failed to write memory: " + err.Error()), nil
-			}
+		if err := mgr.Write(content, file); err != nil {
+			Log("memory_write error: %v", err)
+			return gomcp.NewToolResultError("failed to write memory: " + err.Error()), nil
 		}
-		Log("memory_write: saved %d chars to %s", len(content), path)
+		Log("memory_write: saved %d chars scope=%q file=%q", len(content), scope, file)
 		return gomcp.NewToolResultText("Memory saved."), nil
 	}
 }

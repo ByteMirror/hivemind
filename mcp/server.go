@@ -34,11 +34,12 @@ type HivemindMCPServer struct {
 	instanceID  string // used by Tier 2 introspection tools
 	repoPath    string // scopes brain and instance listing to this repo
 	tier        int    // gates tool registration: 1=read, 2=+introspect, 3=+write
-	memoryMgr   *memory.Manager
+	memoryMgr    *memory.Manager
+	repoMemoryMgr *memory.Manager // scoped to the current repo (may be nil)
 }
 
 // NewHivemindMCPServer creates a new MCP server for a Hivemind agent.
-func NewHivemindMCPServer(brainClient BrainClient, hivemindDir, instanceID, repoPath string, tier int, memMgr *memory.Manager) *HivemindMCPServer {
+func NewHivemindMCPServer(brainClient BrainClient, hivemindDir, instanceID, repoPath string, tier int, memMgr *memory.Manager, repoMemMgr *memory.Manager) *HivemindMCPServer {
 	s := mcpserver.NewMCPServer(
 		"hivemind",
 		"0.1.0",
@@ -49,10 +50,11 @@ func NewHivemindMCPServer(brainClient BrainClient, hivemindDir, instanceID, repo
 		server:      s,
 		stateReader: NewStateReader(hivemindDir),
 		brainClient: brainClient,
-		instanceID:  instanceID,
-		repoPath:    repoPath,
-		tier:        tier,
-		memoryMgr:   memMgr,
+		instanceID:    instanceID,
+		repoPath:      repoPath,
+		tier:          tier,
+		memoryMgr:     memMgr,
+		repoMemoryMgr: repoMemMgr,
 	}
 
 	h.registerTier1Tools()
@@ -76,6 +78,7 @@ func NewHivemindMCPServer(brainClient BrainClient, hivemindDir, instanceID, repo
 // registerMemoryTools registers the IDE-wide memory tools (all tiers).
 func (h *HivemindMCPServer) registerMemoryTools() {
 	mgr := h.memoryMgr
+	repoMgr := h.repoMemoryMgr
 
 	// --- Read-only tools ---
 
@@ -156,25 +159,28 @@ func (h *HivemindMCPServer) registerMemoryTools() {
 
 	memWrite := gomcp.NewTool("memory_write",
 		gomcp.WithDescription(
-			"Write to IDE-wide memory. Without path, appends to today's YYYY-MM-DD.md (legacy). "+
-				"With path, creates/overwrites the specified file. "+
-				"Use scope=\"global\" for user preferences, scope=\"repo\" for project decisions.",
+			"Write to IDE-wide memory. "+
+				"Use scope=\"global\" for cross-project facts (OS, hardware, user preferences) — writes to system/global.md. "+
+				"Use scope=\"repo\" (or omit for dated files) for project-specific decisions. "+
+				"Use this whenever you discover something worth remembering across sessions: "+
+				"user preferences, project facts, environment setup, API keys configured, "+
+				"decisions made and their rationale.",
 		),
 		gomcp.WithString("content",
 			gomcp.Required(),
 			gomcp.Description("The fact or note to save. Plain text or Markdown."),
 		),
 		gomcp.WithString("file",
-			gomcp.Description("Target filename (default: YYYY-MM-DD.md). Named files default to global scope."),
+			gomcp.Description("Target filename (default: YYYY-MM-DD.md). Named files (e.g. global.md) default to global scope."),
 		),
 		gomcp.WithString("scope",
-			gomcp.Description("Storage scope: \"global\" (cross-project) or \"repo\" (this project). Dated files default to repo scope."),
+			gomcp.Description("Storage scope: \"global\" (cross-project, OS/preferences) or \"repo\" (this project). Dated files default to repo scope."),
 		),
 		gomcp.WithString("commit_message",
 			gomcp.Description("Optional git commit message for this change."),
 		),
 	)
-	h.server.AddTool(memWrite, handleMemoryWrite(mgr))
+	h.server.AddTool(memWrite, handleMemoryWrite(mgr, repoMgr))
 
 	memAppend := gomcp.NewTool("memory_append",
 		gomcp.WithDescription("Append content to an existing memory file."),
