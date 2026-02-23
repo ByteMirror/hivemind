@@ -64,6 +64,8 @@ type Instance struct {
 	// ParentTitle is the title of the agent that spawned this instance via brain create_instance.
 	// Empty for manually created (top-level) instances.
 	ParentTitle string
+	// SetupScript is an optional shell command to run once after the worktree is ready.
+	SetupScript string
 
 	// AutomationID is set when this instance was spawned by an automation.
 	// Empty for manually-created instances.
@@ -240,6 +242,9 @@ type InstanceOptions struct {
 	ParentTitle string
 	// AutomationID links this instance to the automation that spawned it.
 	AutomationID string
+	// SetupScript is an optional shell command to run before the agent starts.
+	// It runs in the instance's worktree directory.
+	SetupScript string
 }
 
 func NewInstance(opts InstanceOptions) (*Instance, error) {
@@ -266,6 +271,7 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		Role:            opts.Role,
 		ParentTitle:     opts.ParentTitle,
 		AutomationID:    opts.AutomationID,
+		SetupScript:     opts.SetupScript,
 	}, nil
 }
 
