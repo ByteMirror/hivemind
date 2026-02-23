@@ -105,6 +105,9 @@ type CreateInstanceParams struct {
 	Role            string `json:"role,omitempty"`
 	Topic           string `json:"topic,omitempty"`
 	SkipPermissions *bool  `json:"skip_permissions,omitempty"` // defaults to true for programmatic creation
+	// AutomationID links this instance to the automation that spawned it.
+	// When set, the instance will enter the Review Queue on completion.
+	AutomationID string `json:"automation_id,omitempty"`
 }
 
 // CreateInstanceResult is returned after an instance is created.
