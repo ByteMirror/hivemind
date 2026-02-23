@@ -35,3 +35,11 @@ func getMemoryInjectCount() int {
 	}
 	return globalMemCount
 }
+
+// GetMemoryManager returns the IDE-wide memory manager, or nil if disabled.
+// Safe for concurrent use.
+func GetMemoryManager() *memory.Manager {
+	memMu.RLock()
+	defer memMu.RUnlock()
+	return globalMemMgr
+}
