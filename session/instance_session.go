@@ -184,6 +184,16 @@ func (i *Instance) GetGitWorktree() (*git.GitWorktree, error) {
 	return i.gitWorktree, nil
 }
 
+// GetWorkingPath returns the working directory for this instance.
+// For instances with a git worktree, this is the worktree path.
+// For main-repo instances, this is the repo path (i.Path).
+func (i *Instance) GetWorkingPath() string {
+	if i.gitWorktree != nil {
+		return i.gitWorktree.GetWorktreePath()
+	}
+	return i.Path
+}
+
 // SendPrompt sends a prompt to the tmux session
 func (i *Instance) SendPrompt(prompt string) error {
 	if !i.started.Load() {
