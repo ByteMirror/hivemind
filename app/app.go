@@ -302,6 +302,8 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 			}
 		}
 	}
+	// Apply initial chat filter (default tab is Code, so hide chat agents)
+	h.refreshListChatFilter()
 
 	// Load topics
 	topics, err := storage.LoadTopics()
@@ -354,6 +356,42 @@ func (m *home) instanceMatchesActiveRepos(inst *session.Instance) bool {
 		return m.activeRepoSet()[m.primaryRepoPath]
 	}
 	return m.activeRepoSet()[repoPath]
+}
+
+// visibleInstances returns instances filtered by the active sidebar tab.
+// Code tab shows only non-chat agents; Chat tab shows only chat agents.
+func (m *home) visibleInstances() []*session.Instance {
+	switch m.sidebarTab {
+	case sidebarTabChat:
+		out := make([]*session.Instance, 0)
+		for _, inst := range m.allInstances {
+			if inst.IsChat {
+				out = append(out, inst)
+			}
+		}
+		return out
+	default: // sidebarTabCode
+		out := make([]*session.Instance, 0)
+		for _, inst := range m.allInstances {
+			if !inst.IsChat {
+				out = append(out, inst)
+			}
+		}
+		return out
+	}
+}
+
+// refreshListChatFilter updates the list chat filter based on the active sidebar tab.
+// This is called whenever the sidebar tab changes.
+func (m *home) refreshListChatFilter() {
+	switch m.sidebarTab {
+	case sidebarTabChat:
+		isChat := true
+		m.list.SetChatFilter(&isChat)
+	default: // sidebarTabCode
+		isChat := false
+		m.list.SetChatFilter(&isChat)
+	}
 }
 
 // activeRepoSet returns an O(1) lookup set of active repo paths.

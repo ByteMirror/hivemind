@@ -1515,11 +1515,13 @@ func (m *home) handleDefaultKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case keys.KeySidebarCodeTab:
 		m.sidebarTab = sidebarTabCode
 		m.sidebar.SetTab(int(m.sidebarTab))
-		return m, nil
+		m.refreshListChatFilter()
+		return m, m.instanceChanged()
 	case keys.KeySidebarChatTab:
 		m.sidebarTab = sidebarTabChat
 		m.sidebar.SetTab(int(m.sidebarTab))
-		return m, nil
+		m.refreshListChatFilter()
+		return m, m.instanceChanged()
 	case keys.KeyLeft:
 		m.setFocus(0)
 		return m, nil

@@ -805,6 +805,12 @@ func (m *home) instanceChanged() tea.Cmd {
 	}
 
 	m.tabbedWindow.SetInstance(selected)
+	// Update chat mode: hide Diff/Git tabs for chat agents
+	if selected != nil {
+		m.tabbedWindow.SetChatMode(selected.IsChat)
+	} else {
+		m.tabbedWindow.SetChatMode(false)
+	}
 	m.tabbedWindow.MarkContentStale()
 	// Invalidate any in-flight async preview fetch so stale content isn't applied
 	m.previewGeneration++

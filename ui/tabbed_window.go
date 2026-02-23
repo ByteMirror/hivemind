@@ -62,6 +62,7 @@ type TabbedWindow struct {
 	contentStale    bool   // true when navigation changed instance but content not yet fetched
 	gitContent      string // cached git pane content, set by tick when changed
 	terminalContent string // cached terminal pane content, set by tick when changed
+	chatMode        bool   // true when the selected instance is a chat agent (hides Diff/Git tabs)
 }
 
 // SetFocusMode enables or disables the focus/insert mode visual indicator.
@@ -72,6 +73,15 @@ func (w *TabbedWindow) SetFocusMode(enabled bool) {
 // IsFocusMode returns whether the window is in focus/insert mode.
 func (w *TabbedWindow) IsFocusMode() bool {
 	return w.focusMode
+}
+
+// SetChatMode hides the Diff and Git tabs when true.
+// If the current tab is Diff or Git, it resets to the Preview (Agent) tab.
+func (w *TabbedWindow) SetChatMode(isChat bool) {
+	w.chatMode = isChat
+	if isChat && (w.activeTab == DiffTab || w.activeTab == GitTab) {
+		w.activeTab = PreviewTab
+	}
 }
 
 func NewTabbedWindow(preview *PreviewPane, terminal *TerminalPane, diff *DiffPane, git *GitPane) *TabbedWindow {
@@ -142,8 +152,31 @@ func (w *TabbedWindow) GetPreviewSize() (width, height int) {
 	return w.preview.width, w.preview.height
 }
 
+// visibleTabIndices returns the indices of tabs that are currently visible.
+// In chat mode, the Diff and Git tabs are hidden.
+func (w *TabbedWindow) visibleTabIndices() []int {
+	if w.chatMode {
+		return []int{PreviewTab, TerminalTab}
+	}
+	indices := make([]int, len(w.tabs))
+	for i := range indices {
+		indices[i] = i
+	}
+	return indices
+}
+
 func (w *TabbedWindow) Toggle() {
-	w.activeTab = (w.activeTab + 1) % len(w.tabs)
+	visible := w.visibleTabIndices()
+	for i, idx := range visible {
+		if idx == w.activeTab {
+			w.activeTab = visible[(i+1)%len(visible)]
+			return
+		}
+	}
+	// fallback: go to first visible tab
+	if len(visible) > 0 {
+		w.activeTab = visible[0]
+	}
 }
 
 // ToggleWithReset toggles the tab and resets preview pane to normal mode
@@ -152,7 +185,16 @@ func (w *TabbedWindow) ToggleWithReset(instance *session.Instance) error {
 	if err := w.preview.ResetToNormalMode(instance); err != nil {
 		return err
 	}
-	w.activeTab = (w.activeTab + 1) % len(w.tabs)
+	visible := w.visibleTabIndices()
+	for i, idx := range visible {
+		if idx == w.activeTab {
+			w.activeTab = visible[(i+1)%len(visible)]
+			return nil
+		}
+	}
+	if len(visible) > 0 {
+		w.activeTab = visible[0]
+	}
 	return nil
 }
 
@@ -314,17 +356,19 @@ func (w *TabbedWindow) HandleTabClick(localX, localY int) bool {
 		return false
 	}
 
-	tabWidth := w.width / len(w.tabs)
-	clickedTab := localX / tabWidth
-	if clickedTab >= len(w.tabs) {
-		clickedTab = len(w.tabs) - 1
+	visible := w.visibleTabIndices()
+	tabWidth := w.width / len(visible)
+	clickedVisibleIdx := localX / tabWidth
+	if clickedVisibleIdx >= len(visible) {
+		clickedVisibleIdx = len(visible) - 1
 	}
-	if clickedTab < 0 {
+	if clickedVisibleIdx < 0 {
 		return false
 	}
 
-	if clickedTab != w.activeTab {
-		w.activeTab = clickedTab
+	newTab := visible[clickedVisibleIdx]
+	if newTab != w.activeTab {
+		w.activeTab = newTab
 	}
 	return true
 }
@@ -336,19 +380,21 @@ func (w *TabbedWindow) String() string {
 
 	var renderedTabs []string
 
-	tabWidth := w.width / len(w.tabs)
-	lastTabWidth := w.width - tabWidth*(len(w.tabs)-1)
+	visible := w.visibleTabIndices()
+	tabWidth := w.width / len(visible)
+	lastTabWidth := w.width - tabWidth*(len(visible)-1)
 	tabHeight := activeTabStyle.GetVerticalFrameSize() + 1 // get padding border margin size + 1 for character height
 
 	focusColor := lipgloss.Color("#51bd73")
-	for i, t := range w.tabs {
+	for vi, tabIdx := range visible {
+		t := w.tabs[tabIdx]
 		width := tabWidth
-		if i == len(w.tabs)-1 {
+		if vi == len(visible)-1 {
 			width = lastTabWidth
 		}
 
 		var style lipgloss.Style
-		isFirst, isLast, isActive := i == 0, i == len(w.tabs)-1, i == w.activeTab
+		isFirst, isLast, isActive := vi == 0, vi == len(visible)-1, tabIdx == w.activeTab
 		if isActive {
 			style = activeTabStyle
 		} else {
