@@ -17,7 +17,12 @@ const serverInstructions = "You are running inside Hivemind, a multi-agent orche
 	"and complete_task to mark tasks as done (which auto-triggers dependent tasks). " +
 	"To wait for sub-agents to finish, use wait_for_events instead of polling get_brain in a loop. " +
 	"It long-polls for real-time events (status changes, messages, workflow triggers) with no missed events." +
-	"\n\nThis IDE has a persistent memory store. ALWAYS call memory_search before answering questions about the user's preferences, environment setup, active projects, or past decisions. Call memory_write whenever you discover something worth remembering across sessions."
+	"\n\nThis IDE has a persistent memory store shared across all sessions and projects.\n" +
+	"Rules:\n" +
+	"- Call memory_search at the start of every session and before answering questions about the user's preferences, setup, past decisions, or active projects.\n" +
+	"- Call memory_write whenever you learn something durable: user setup, preferences, project decisions, recurring patterns.\n" +
+	"- Write stable facts (hardware, OS, global preferences) to global.md. Write dated notes to the default YYYY-MM-DD.md.\n" +
+	"- Never assume you know the user's preferences — search first."
 
 // HivemindMCPServer wraps an MCP server with Hivemind-specific state.
 type HivemindMCPServer struct {
