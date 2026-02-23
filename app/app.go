@@ -189,6 +189,7 @@ type home struct {
 	listWidth     int // full allocation including gaps
 	columnGap     int // gap on each side of the instance list
 	contentHeight int
+	height        int
 	width         int // full terminal width
 
 	// Automations
@@ -388,6 +389,7 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	m.columnGap = columnGap
 	m.contentHeight = contentHeight
 	m.width = msg.Width
+	m.height = msg.Height
 
 	if m.textInputOverlay != nil {
 		m.textInputOverlay.SetSize(int(float32(msg.Width)*0.6), int(float32(msg.Height)*0.4))
@@ -741,11 +743,7 @@ func (m *home) View() string {
 	case m.state == stateSkillPicker && m.pickerOverlay != nil:
 		result = overlay.PlaceOverlay(0, 0, m.pickerOverlay.Render(), mainView, true, true)
 	case m.state == stateAutomations || m.state == stateNewAutomation:
-		modalWidth := m.width - 4
-		if modalWidth > 76 {
-			modalWidth = 76
-		}
-		autoView := ui.RenderAutomationsList(m.automations, m.autoSelectedIdx, modalWidth)
+		autoView := ui.RenderAutomationsList(m.automations, m.autoSelectedIdx, m.width-4, m.height-4)
 		if m.textInputOverlay != nil {
 			autoView = overlay.PlaceOverlay(0, 0, m.textInputOverlay.Render(), autoView, true, true)
 		}
