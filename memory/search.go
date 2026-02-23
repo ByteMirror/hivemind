@@ -47,19 +47,30 @@ func (m *Manager) Search(query string, opts SearchOpts) ([]SearchResult, error) 
 		}
 	}
 
-	// 3. Merge and apply temporal decay under the read lock.
+	// 3. If FTS5 returned nothing but a reranker is configured, fetch all
+	// chunks as candidates so the reranker can find semantically relevant
+	// content that keyword search missed (e.g. "projects I work on" vs
+	// "repositories" — zero keyword overlap but high semantic relevance).
+	if len(bm25Results) == 0 && len(vecResults) == 0 && m.reranker != nil {
+		bm25Results, err = m.allChunks(fetchLimit)
+		if err != nil {
+			bm25Results = nil
+		}
+	}
+
+	// 4. Merge and apply temporal decay under the read lock.
 	merged := mergeResults(bm25Results, vecResults, fetchLimit)
 	merged = applyTemporalDecay(merged, m)
 
 	m.mu.RUnlock() // release before any external call
 
-	// 4. Convert to []SearchResult for reranker.
+	// 5. Convert to []SearchResult for reranker.
 	candidates := make([]SearchResult, len(merged))
 	for i, r := range merged {
 		candidates[i] = r.SearchResult
 	}
 
-	// 5. Apply Claude reranker if configured (external subprocess call).
+	// 6. Apply Claude reranker if configured (external subprocess call).
 	if m.reranker != nil {
 		candidates, _ = m.reranker.Rerank(query, candidates) // graceful fallback on error
 	}
@@ -99,6 +110,33 @@ func (m *Manager) bm25Search(query string, limit int) ([]scoredResult, error) {
 		var chunkID int64
 		var r scoredResult
 		if err := rows.Scan(&chunkID, &r.Path, &r.StartLine, &r.EndLine, &r.Snippet, &r.bm25Score); err != nil {
+			continue
+		}
+		r.Snippet = truncate(r.Snippet, snippetMaxChars)
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}
+
+// allChunks returns every indexed chunk with a uniform score of 0.
+// Used as fallback candidates when FTS5 produces no hits but a reranker
+// is available to do semantic selection.
+func (m *Manager) allChunks(limit int) ([]scoredResult, error) {
+	rows, err := m.db.Query(`
+		SELECT f.path, c.start_line, c.end_line, c.text
+		FROM chunks c
+		JOIN files f ON c.file_id = f.id
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []scoredResult
+	for rows.Next() {
+		var r scoredResult
+		if err := rows.Scan(&r.Path, &r.StartLine, &r.EndLine, &r.Snippet); err != nil {
 			continue
 		}
 		r.Snippet = truncate(r.Snippet, snippetMaxChars)
@@ -233,14 +271,42 @@ func applyTemporalDecay(results []scoredResult, m *Manager) []scoredResult {
 	return results
 }
 
+// ftsStopWords are common English words that carry no search signal and
+// cause FTS5 to produce low-quality matches when included in queries.
+var ftsStopWords = map[string]bool{
+	"a": true, "an": true, "the": true, "and": true, "or": true, "but": true,
+	"in": true, "on": true, "at": true, "to": true, "for": true, "of": true,
+	"with": true, "by": true, "from": true, "is": true, "are": true, "was": true,
+	"were": true, "be": true, "been": true, "have": true, "has": true, "had": true,
+	"do": true, "does": true, "did": true, "will": true, "would": true, "could": true,
+	"should": true, "may": true, "might": true, "i": true, "me": true, "my": true,
+	"we": true, "our": true, "you": true, "your": true, "it": true, "its": true,
+	"that": true, "this": true, "what": true, "which": true, "who": true, "how": true,
+	"all": true, "some": true, "any": true, "no": true, "not": true, "so": true,
+	"up": true, "out": true, "about": true, "work": true, "use": true, "get": true,
+}
+
 // ftsQuery sanitizes a query string for FTS5 MATCH syntax.
+// Stop words are stripped so natural-language queries like "projects I work on"
+// reduce to meaningful tokens ("projects") rather than flooding FTS5 with
+// high-frequency words that score poorly.
+// If stripping removes all tokens, the original query is used as-is.
 func ftsQuery(q string) string {
 	tokens := strings.Fields(q)
 	if len(tokens) == 0 {
 		return q
 	}
-	quoted := make([]string, len(tokens))
-	for i, t := range tokens {
+	var meaningful []string
+	for _, t := range tokens {
+		if !ftsStopWords[strings.ToLower(t)] {
+			meaningful = append(meaningful, t)
+		}
+	}
+	if len(meaningful) == 0 {
+		meaningful = tokens // fallback: use everything if all were stop words
+	}
+	quoted := make([]string, len(meaningful))
+	for i, t := range meaningful {
 		quoted[i] = `"` + strings.ReplaceAll(t, `"`, "") + `"`
 	}
 	return strings.Join(quoted, " OR ")
