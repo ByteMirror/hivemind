@@ -91,26 +91,34 @@ func (p *OllamaProvider) Name() string { return "ollama/" + p.Model }
 func (p *OllamaProvider) Embed(texts []string) ([][]float32, error) {
 	vecs := make([][]float32, 0, len(texts))
 	for _, text := range texts {
-		body, _ := json.Marshal(map[string]any{
-			"model":  p.Model,
-			"prompt": text,
-		})
-		req, _ := http.NewRequest("POST", p.URL+"/api/embeddings", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := p.client.Do(req)
+		vec, err := p.embedOne(text)
 		if err != nil {
-			return nil, fmt.Errorf("ollama embed: %w", err)
+			return nil, err
 		}
-		defer resp.Body.Close()
-
-		var result struct {
-			Embedding []float32 `json:"embedding"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return nil, fmt.Errorf("ollama decode: %w", err)
-		}
-		vecs = append(vecs, result.Embedding)
+		vecs = append(vecs, vec)
 	}
 	return vecs, nil
+}
+
+func (p *OllamaProvider) embedOne(text string) ([]float32, error) {
+	body, _ := json.Marshal(map[string]any{
+		"model":  p.Model,
+		"prompt": text,
+	})
+	req, _ := http.NewRequest("POST", p.URL+"/api/embeddings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("ollama embed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Embedding []float32 `json:"embedding"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("ollama decode: %w", err)
+	}
+	return result.Embedding, nil
 }
