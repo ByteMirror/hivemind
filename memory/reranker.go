@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-const (
-	defaultRerankModel = "claude-haiku-4-5-20251001"
-	rerankTimeout      = 30 * time.Second
-)
+// DefaultRerankModel is the default Claude model used for re-ranking.
+const DefaultRerankModel = "claude-haiku-4-5-20251001"
+
+const rerankTimeout = 30 * time.Second
 
 // ClaudeReranker uses a local claude CLI process to re-rank FTS5 keyword
 // results by semantic relevance. It works with any claude auth method —
@@ -28,7 +28,7 @@ type ClaudeReranker struct {
 // Returns an error if the claude binary is not found in PATH.
 func NewClaudeReranker(model string) (*ClaudeReranker, error) {
 	if model == "" {
-		model = defaultRerankModel
+		model = DefaultRerankModel
 	}
 	path, err := exec.LookPath("claude")
 	if err != nil {

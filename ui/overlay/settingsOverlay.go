@@ -194,6 +194,26 @@ func (s *SettingsOverlay) GetItem(key string) *SettingItem {
 	return nil
 }
 
+// Items returns a copy of the current settings items slice.
+func (s *SettingsOverlay) Items() []SettingItem {
+	cp := make([]SettingItem, len(s.items))
+	copy(cp, s.items)
+	return cp
+}
+
+// SetItems replaces the settings items and clamps the selection index.
+func (s *SettingsOverlay) SetItems(items []SettingItem) {
+	s.items = items
+	if s.selectedIdx >= len(s.items) {
+		if len(s.items) == 0 {
+			s.selectedIdx = 0
+		} else {
+			s.selectedIdx = len(s.items) - 1
+		}
+	}
+	s.clampViewOffset()
+}
+
 // SetSize sets the display dimensions for the overlay.
 func (s *SettingsOverlay) SetSize(width, height int) {
 	if width > 20 {

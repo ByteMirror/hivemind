@@ -5,6 +5,8 @@ import (
 	"strconv"
 
 	"github.com/ByteMirror/hivemind/config"
+	"github.com/ByteMirror/hivemind/log"
+	"github.com/ByteMirror/hivemind/memory"
 	"github.com/ByteMirror/hivemind/session"
 	"github.com/ByteMirror/hivemind/ui/overlay"
 
@@ -107,6 +109,121 @@ func (m *home) executeCommandPaletteAction(action string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// buildMemorySettingItems returns settings items for the Memory section.
+// Provider-specific fields are only included when relevant.
+func buildMemorySettingItems(cfg *config.Config) []overlay.SettingItem {
+	mem := cfg.Memory
+	enabled := "false"
+	provider := "none"
+	claudeModel := memory.DefaultRerankModel
+	openAIKey := ""
+	openAIModel := "text-embedding-3-small"
+	ollamaURL := "http://localhost:11434"
+	ollamaModel := "nomic-embed-text"
+	injectCount := "5"
+
+	if mem != nil {
+		if mem.Enabled {
+			enabled = "true"
+		}
+		if mem.EmbeddingProvider != "" {
+			provider = mem.EmbeddingProvider
+		}
+		if mem.ClaudeModel != "" {
+			claudeModel = mem.ClaudeModel
+		}
+		if mem.OpenAIAPIKey != "" {
+			openAIKey = mem.OpenAIAPIKey
+		}
+		if mem.OpenAIModel != "" {
+			openAIModel = mem.OpenAIModel
+		}
+		if mem.OllamaURL != "" {
+			ollamaURL = mem.OllamaURL
+		}
+		if mem.OllamaModel != "" {
+			ollamaModel = mem.OllamaModel
+		}
+		if mem.StartupInjectCount > 0 {
+			injectCount = strconv.Itoa(mem.StartupInjectCount)
+		}
+	}
+
+	items := []overlay.SettingItem{
+		{
+			Label:       "── Memory ──",
+			Description: "",
+			Type:        overlay.SettingText,
+			Value:       "",
+			Key:         "memory_section_header",
+		},
+		{
+			Label:       "Memory enabled",
+			Description: "Persistent knowledge base shared across all agents",
+			Type:        overlay.SettingToggle,
+			Value:       enabled,
+			Key:         "memory.enabled",
+		},
+		{
+			Label:       "Search provider",
+			Description: "claude = re-rank via local claude CLI (works with Max), openai/ollama = embeddings",
+			Type:        overlay.SettingPicker,
+			Value:       provider,
+			Options:     []string{"none", "claude", "openai", "ollama"},
+			Key:         "memory.embedding_provider",
+		},
+	}
+
+	switch provider {
+	case "claude":
+		items = append(items, overlay.SettingItem{
+			Label:       "Claude model",
+			Description: "Model for re-ranking (default: claude-haiku-4-5-20251001)",
+			Type:        overlay.SettingText,
+			Value:       claudeModel,
+			Key:         "memory.claude_model",
+		})
+	case "openai":
+		items = append(items, overlay.SettingItem{
+			Label:       "OpenAI API key",
+			Description: "sk-... key from platform.openai.com",
+			Type:        overlay.SettingText,
+			Value:       openAIKey,
+			Key:         "memory.openai_api_key",
+		}, overlay.SettingItem{
+			Label:       "OpenAI model",
+			Description: "Embedding model (default: text-embedding-3-small)",
+			Type:        overlay.SettingText,
+			Value:       openAIModel,
+			Key:         "memory.openai_model",
+		})
+	case "ollama":
+		items = append(items, overlay.SettingItem{
+			Label:       "Ollama URL",
+			Description: "Ollama server URL (default: http://localhost:11434)",
+			Type:        overlay.SettingText,
+			Value:       ollamaURL,
+			Key:         "memory.ollama_url",
+		}, overlay.SettingItem{
+			Label:       "Ollama model",
+			Description: "Embedding model (default: nomic-embed-text)",
+			Type:        overlay.SettingText,
+			Value:       ollamaModel,
+			Key:         "memory.ollama_model",
+		})
+	}
+
+	items = append(items, overlay.SettingItem{
+		Label:       "Startup snippets",
+		Description: "Memory snippets injected into CLAUDE.md at agent start (default: 5)",
+		Type:        overlay.SettingText,
+		Value:       injectCount,
+		Key:         "memory.startup_inject_count",
+	})
+
+	return items
+}
+
 // openSettings builds the settings overlay from the current config.
 func (m *home) openSettings() (tea.Model, tea.Cmd) {
 	notifications := "true"
@@ -158,6 +275,7 @@ func (m *home) openSettings() (tea.Model, tea.Cmd) {
 		},
 	}
 
+	items = append(items, buildMemorySettingItems(m.appConfig)...)
 	m.settingsOverlay = overlay.NewSettingsOverlay(items)
 	m.state = stateSettings
 	return m, nil
@@ -183,9 +301,74 @@ func (m *home) applySettingChange(key string) {
 		m.appConfig.DefaultProgram = item.Value
 	case "branch_prefix":
 		m.appConfig.BranchPrefix = item.Value
+	case "memory.enabled":
+		m.ensureMemoryConfig()
+		m.appConfig.Memory.Enabled = item.Value == "true"
+		m.restartMemoryManager()
+	case "memory.embedding_provider":
+		m.ensureMemoryConfig()
+		m.appConfig.Memory.EmbeddingProvider = item.Value
+		// Rebuild overlay to show/hide provider-specific fields.
+		allItems := m.settingsOverlay.Items()
+		// Find where memory section starts (first item with key "memory_section_header").
+		memStart := len(allItems)
+		for i, it := range allItems {
+			if it.Key == "memory_section_header" {
+				memStart = i
+				break
+			}
+		}
+		newItems := append(allItems[:memStart:memStart], buildMemorySettingItems(m.appConfig)...)
+		m.settingsOverlay.SetItems(newItems)
+		m.restartMemoryManager()
+	case "memory.claude_model":
+		m.ensureMemoryConfig()
+		m.appConfig.Memory.ClaudeModel = item.Value
+	case "memory.openai_api_key":
+		m.ensureMemoryConfig()
+		m.appConfig.Memory.OpenAIAPIKey = item.Value
+		m.restartMemoryManager()
+	case "memory.openai_model":
+		m.ensureMemoryConfig()
+		m.appConfig.Memory.OpenAIModel = item.Value
+	case "memory.ollama_url":
+		m.ensureMemoryConfig()
+		m.appConfig.Memory.OllamaURL = item.Value
+	case "memory.ollama_model":
+		m.ensureMemoryConfig()
+		m.appConfig.Memory.OllamaModel = item.Value
+	case "memory.startup_inject_count":
+		m.ensureMemoryConfig()
+		if n, err := strconv.Atoi(item.Value); err == nil && n > 0 {
+			m.appConfig.Memory.StartupInjectCount = n
+		}
 	}
 
 	if err := config.SaveConfig(m.appConfig); err != nil {
 		m.handleError(fmt.Errorf("failed to save settings: %w", err))
 	}
+}
+
+// ensureMemoryConfig initialises Memory config if nil.
+func (m *home) ensureMemoryConfig() {
+	if m.appConfig.Memory == nil {
+		m.appConfig.Memory = &config.MemoryConfig{}
+	}
+}
+
+// restartMemoryManager re-initialises the memory manager from the current config.
+// Called whenever memory.enabled or the provider changes.
+func (m *home) restartMemoryManager() {
+	mgr, err := memory.NewManagerFromConfig(m.appConfig)
+	if err != nil {
+		if log.WarningLog != nil {
+			log.WarningLog.Printf("memory restart: %v", err)
+		}
+		return
+	}
+	injectCount := 5
+	if m.appConfig.Memory != nil && m.appConfig.Memory.StartupInjectCount > 0 {
+		injectCount = m.appConfig.Memory.StartupInjectCount
+	}
+	session.SetMemoryManager(mgr, injectCount)
 }
