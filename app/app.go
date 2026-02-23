@@ -189,13 +189,14 @@ type home struct {
 	listWidth     int // full allocation including gaps
 	columnGap     int // gap on each side of the instance list
 	contentHeight int
+	height        int
 	width         int // full terminal width
 
 	// Automations
 	automations     []*config.Automation
 	autoSelectedIdx int
-	autoCreating    *config.Automation
-	autoCreateStep  int
+	autoForm        *ui.AutomationForm
+	autoEditIdx     int // -1 = new, >=0 = index of automation being edited
 
 	// embeddedTerminal is the VT emulator for focus mode (nil when not in focus mode)
 	embeddedTerminal *session.EmbeddedTerminal
@@ -388,6 +389,7 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	m.columnGap = columnGap
 	m.contentHeight = contentHeight
 	m.width = msg.Width
+	m.height = msg.Height
 
 	if m.textInputOverlay != nil {
 		m.textInputOverlay.SetSize(int(float32(msg.Width)*0.6), int(float32(msg.Height)*0.4))
@@ -729,7 +731,9 @@ func (m *home) View() string {
 			log.ErrorLog.Printf("text overlay is nil")
 		}
 		result = overlay.PlaceOverlay(0, 0, m.textOverlay.Render(), mainView, true, true)
-	case m.state == stateConfirm || m.state == stateNewTopicConfirm:
+	case m.state == stateNewTopicConfirm && m.pickerOverlay != nil:
+		result = overlay.PlaceOverlay(0, 0, m.pickerOverlay.Render(), mainView, true, true)
+	case m.state == stateConfirm:
 		if m.confirmationOverlay == nil {
 			log.ErrorLog.Printf("confirmation overlay is nil")
 		}
@@ -741,11 +745,11 @@ func (m *home) View() string {
 	case m.state == stateSkillPicker && m.pickerOverlay != nil:
 		result = overlay.PlaceOverlay(0, 0, m.pickerOverlay.Render(), mainView, true, true)
 	case m.state == stateAutomations || m.state == stateNewAutomation:
-		mainView = ui.RenderAutomationsList(m.automations, m.autoSelectedIdx, m.width)
+		autoView := ui.RenderAutomationsList(m.automations, m.autoSelectedIdx, m.width-4, m.height-4, m.autoForm)
 		if m.textInputOverlay != nil {
-			mainView = overlay.PlaceOverlay(0, 0, m.textInputOverlay.Render(), mainView, true, true)
+			autoView = overlay.PlaceOverlay(0, 0, m.textInputOverlay.Render(), autoView, true, true)
 		}
-		result = mainView
+		result = overlay.PlaceOverlay(0, 0, autoView, mainView, true, true)
 	case m.state == stateMemoryBrowser && m.memoryBrowser != nil:
 		result = m.memoryBrowser.Render()
 	case m.state == stateContextMenu && m.contextMenu != nil:

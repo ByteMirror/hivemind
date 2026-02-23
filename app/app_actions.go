@@ -299,7 +299,7 @@ func (m *home) openContextMenu() (tea.Model, tea.Cmd) {
 			{Label: "Delete topic (ungroup only)", Action: "delete_topic"},
 			{Label: "Rename topic", Action: "rename_topic"},
 		}
-		if topic.SharedWorktree {
+		if topic.IsSharedWorktree() {
 			items = append(items, overlay.ContextMenuItem{Label: "Push branch", Action: "push_topic"})
 		}
 		// Position next to the selected sidebar item

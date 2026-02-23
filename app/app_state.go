@@ -30,7 +30,7 @@ func topicMeta(topics []*session.Topic) (names []string, shared map[string]bool,
 	autoYes = make(map[string]bool)
 	for i, t := range topics {
 		names[i] = t.Name
-		if t.SharedWorktree {
+		if t.IsSharedWorktree() {
 			shared[t.Name] = true
 		}
 		if t.AutoYes {
@@ -168,11 +168,7 @@ func (m *home) enterGitFocusMode() tea.Cmd {
 
 	gitPane := m.tabbedWindow.GetGitPane()
 	if !gitPane.IsRunning() {
-		worktree, err := selected.GetGitWorktree()
-		if err != nil {
-			return m.handleError(err)
-		}
-		gitPane.Attach(worktree.GetWorktreePath(), selected.Title)
+		gitPane.Attach(selected.GetWorkingPath(), selected.Title)
 	}
 
 	m.state = stateFocusAgent
@@ -194,11 +190,7 @@ func (m *home) enterTerminalFocusMode() tea.Cmd {
 	}
 
 	termPane := m.tabbedWindow.GetTerminalPane()
-	worktree, err := selected.GetGitWorktree()
-	if err != nil {
-		return m.handleError(err)
-	}
-	termPane.Attach(worktree.GetWorktreePath(), selected.Title)
+	termPane.Attach(selected.GetWorkingPath(), selected.Title)
 
 	m.state = stateFocusAgent
 	m.tabbedWindow.SetFocusMode(true)
@@ -228,11 +220,8 @@ func (m *home) openFileInTerminal(relativePath string) (tea.Model, tea.Cmd) {
 	if selected == nil || !selected.Started() || selected.Paused() {
 		return m, nil
 	}
-	worktree, err := selected.GetGitWorktree()
-	if err != nil {
-		return m, m.handleError(err)
-	}
-	fullPath := filepath.Join(worktree.GetWorktreePath(), relativePath)
+	workingPath := selected.GetWorkingPath()
+	fullPath := filepath.Join(workingPath, relativePath)
 
 	// Exit current focus mode
 	m.exitFocusMode()
@@ -243,7 +232,7 @@ func (m *home) openFileInTerminal(relativePath string) (tea.Model, tea.Cmd) {
 
 	// Attach terminal
 	termPane := m.tabbedWindow.GetTerminalPane()
-	termPane.Attach(worktree.GetWorktreePath(), selected.Title)
+	termPane.Attach(workingPath, selected.Title)
 
 	m.state = stateFocusAgent
 	m.tabbedWindow.SetFocusMode(true)
@@ -847,13 +836,8 @@ func (m *home) attachGitTab() tea.Cmd {
 		return nil
 	}
 
-	worktree, err := selected.GetGitWorktree()
-	if err != nil {
-		return m.handleError(err)
-	}
-
 	gitPane := m.tabbedWindow.GetGitPane()
-	gitPane.Attach(worktree.GetWorktreePath(), selected.Title)
+	gitPane.Attach(selected.GetWorkingPath(), selected.Title)
 
 	return func() tea.Msg {
 		return gitTabTickMsg{}
@@ -867,13 +851,8 @@ func (m *home) spawnTerminalTab() tea.Cmd {
 		return nil
 	}
 
-	worktree, err := selected.GetGitWorktree()
-	if err != nil {
-		return m.handleError(err)
-	}
-
 	termPane := m.tabbedWindow.GetTerminalPane()
-	termPane.Attach(worktree.GetWorktreePath(), selected.Title)
+	termPane.Attach(selected.GetWorkingPath(), selected.Title)
 
 	return func() tea.Msg {
 		return terminalTabTickMsg{}

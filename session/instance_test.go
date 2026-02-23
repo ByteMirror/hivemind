@@ -64,3 +64,13 @@ func TestSetStatus_NoReviewForManualInstance(t *testing.T) {
 		t.Error("PendingReview should be false for manual instance")
 	}
 }
+
+func TestInstance_GetWorkingPath(t *testing.T) {
+	t.Run("returns repo path when no worktree", func(t *testing.T) {
+		inst := &Instance{Path: "/my/repo"}
+		inst.started.Store(true)
+		if got := inst.GetWorkingPath(); got != "/my/repo" {
+			t.Errorf("got %q, want /my/repo", got)
+		}
+	})
+}

@@ -264,7 +264,7 @@ func (m *home) handleRightClick(x, y, contentY int) (tea.Model, tea.Cmd) {
 			{Label: "Delete topic (ungroup only)", Action: "delete_topic"},
 			{Label: "Rename topic", Action: "rename_topic"},
 		}
-		if topic.SharedWorktree {
+		if topic.IsSharedWorktree() {
 			items = append(items, overlay.ContextMenuItem{Label: "Push branch", Action: "push_topic"})
 		}
 		m.contextMenu = overlay.NewContextMenu(x, y, items)
@@ -487,9 +487,12 @@ func (m *home) handleNewInstanceKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Start instance asynchronously
 		startCmd := func() tea.Msg {
 			var startErr error
-			if topic != nil && topic.SharedWorktree && topic.Started() {
+			switch {
+			case topic != nil && topic.IsSharedWorktree() && topic.Started():
 				startErr = instance.StartInSharedWorktree(topic.GetGitWorktree(), topic.Branch)
-			} else {
+			case topic != nil && topic.IsMainRepo():
+				startErr = instance.StartInMainRepo()
+			default:
 				startErr = instance.Start(true)
 			}
 			if startErr != nil {
@@ -983,12 +986,16 @@ func (m *home) handleNewTopicKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.textInputOverlay = nil
 				return m, m.handleError(fmt.Errorf("topic name cannot be empty"))
 			}
-			// Show shared worktree confirmation
+			// Show worktree mode picker
 			m.textInputOverlay = nil
-			m.confirmationOverlay = overlay.NewConfirmationOverlay(
-				fmt.Sprintf("Create shared worktree for topic '%s'?\nAll instances will share one branch and directory.", m.pendingTopicName),
+			m.pickerOverlay = overlay.NewPickerOverlay(
+				fmt.Sprintf("Worktree mode for '%s'", m.pendingTopicName),
+				[]string{
+					"Per-instance worktrees",
+					"Shared worktree",
+					"Main repo (no worktree)",
+				},
 			)
-			m.confirmationOverlay.SetWidth(60)
 			m.state = stateNewTopicConfirm
 			return m, nil
 		}
@@ -1003,29 +1010,47 @@ func (m *home) handleNewTopicKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *home) handleNewTopicConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.confirmationOverlay == nil {
+	if m.pickerOverlay == nil {
 		m.state = stateDefault
 		return m, nil
 	}
-	shouldClose := m.confirmationOverlay.HandleKeyPress(msg)
+	shouldClose := m.pickerOverlay.HandleKeyPress(msg)
 	if !shouldClose {
-		return m, nil // No decision yet
+		return m, nil
 	}
 
-	// Determine if confirmed (y) or cancelled (n/esc) based on which key was pressed
-	shared := msg.String() == m.confirmationOverlay.ConfirmKey
+	if !m.pickerOverlay.IsSubmitted() {
+		// Cancelled
+		m.pickerOverlay = nil
+		m.pendingTopicName = ""
+		m.pendingTopicRepoPath = ""
+		m.state = stateDefault
+		m.menu.SetState(ui.StateDefault)
+		return m, tea.WindowSize()
+	}
+
+	var mode session.TopicWorktreeMode
+	switch m.pickerOverlay.Value() {
+	case "Shared worktree":
+		mode = session.TopicWorktreeModeShared
+	case "Main repo (no worktree)":
+		mode = session.TopicWorktreeModeMainRepo
+	default:
+		mode = session.TopicWorktreeModePerInstance
+	}
+	m.pickerOverlay = nil
+
 	topicRepoPath := m.pendingTopicRepoPath
 	if topicRepoPath == "" {
 		topicRepoPath = m.activeRepoPaths[0]
 	}
 	topic := session.NewTopic(session.TopicOptions{
-		Name:           m.pendingTopicName,
-		SharedWorktree: shared,
-		Path:           topicRepoPath,
+		Name:         m.pendingTopicName,
+		WorktreeMode: mode,
+		Path:         topicRepoPath,
 	})
 	if err := topic.Setup(); err != nil {
 		m.pendingTopicName = ""
-		m.confirmationOverlay = nil
 		m.state = stateDefault
 		m.menu.SetState(ui.StateDefault)
 		return m, m.handleError(err)
@@ -1038,7 +1063,6 @@ func (m *home) handleNewTopicConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	m.pendingTopicName = ""
 	m.pendingTopicRepoPath = ""
-	m.confirmationOverlay = nil
 	m.state = stateDefault
 	m.menu.SetState(ui.StateDefault)
 	return m, tea.WindowSize()
@@ -1553,7 +1577,7 @@ func (m *home) handleDefaultKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Can't move shared-worktree instances (they're tied to their topic's worktree)
 		if selected.TopicName != "" {
 			for _, t := range m.topics {
-				if t.Name == selected.TopicName && t.SharedWorktree {
+				if t.Name == selected.TopicName && t.IsSharedWorktree() {
 					return m, m.handleError(fmt.Errorf("cannot move instances in shared-worktree topics"))
 				}
 			}
@@ -1641,13 +1665,10 @@ func (m *home) handleDefaultKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case keys.KeyMemoryBrowser:
 		return m.openMemoryBrowser()
+	case keys.KeyAutomations:
+		m.state = stateAutomations
+		return m, nil
 	default:
-		// Check raw key string for features without a named key binding.
-		switch msg.String() {
-		case "A":
-			m.state = stateAutomations
-			return m, nil
-		}
 		return m, nil
 	}
 }
@@ -1981,14 +2002,23 @@ func (m *home) handleAutomationsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "n":
-		// Start creation flow: step 0 = name.
-		m.autoCreateStep = 0
-		m.textInputOverlay = overlay.NewTextInputOverlay("Automation name", "")
-		m.textInputOverlay.SetSize(60, 10)
+		m.autoForm = ui.NewAutomationForm("", "", "", false)
+		m.autoEditIdx = -1
 		m.state = stateNewAutomation
 		return m, nil
 
 	case "e":
+		// Open edit form for selected automation.
+		if len(m.automations) == 0 {
+			return m, nil
+		}
+		auto := m.automations[m.autoSelectedIdx]
+		m.autoForm = ui.NewAutomationForm(auto.Name, auto.Schedule, auto.Instructions, true)
+		m.autoEditIdx = m.autoSelectedIdx
+		m.state = stateNewAutomation
+		return m, nil
+
+	case "t":
 		// Toggle enabled/disabled on selected automation.
 		if len(m.automations) == 0 {
 			return m, nil
@@ -2048,65 +2078,50 @@ func (m *home) handleAutomationsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleNewAutomationKeys handles key events in the new-automation creation flow.
-// Steps: 0=name, 1=instructions, 2=schedule.
+// handleNewAutomationKeys handles key events in the inline create/edit form.
 func (m *home) handleNewAutomationKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.textInputOverlay == nil {
+	if m.autoForm == nil {
 		m.state = stateAutomations
 		return m, nil
 	}
 
-	done := m.textInputOverlay.HandleKeyPress(msg)
-	if m.textInputOverlay.Canceled {
-		m.textInputOverlay = nil
-		m.autoCreating = nil
-		m.state = stateAutomations
-		return m, nil
-	}
+	done := m.autoForm.HandleKey(msg)
 	if !done {
 		return m, nil
 	}
 
-	value := m.textInputOverlay.GetValue()
-	m.textInputOverlay = nil
-
-	switch m.autoCreateStep {
-	case 0: // name captured
-		if value == "" {
-			m.toastManager.Error("Automation name cannot be empty")
-			// Retry
-			m.textInputOverlay = overlay.NewTextInputOverlay("Automation name", "")
-			m.textInputOverlay.SetSize(60, 10)
-			return m, m.toastTickCmd()
-		}
-		m.autoCreating = &config.Automation{Name: value}
-		m.autoCreateStep = 1
-		m.textInputOverlay = overlay.NewTextInputOverlay("Instructions (prompt for the agent)", "")
-		m.textInputOverlay.SetSize(60, 15)
+	if m.autoForm.Canceled {
+		m.autoForm = nil
+		m.state = stateAutomations
 		return m, nil
+	}
 
-	case 1: // instructions captured
-		m.autoCreating.Instructions = value
-		m.autoCreateStep = 2
-		m.textInputOverlay = overlay.NewTextInputOverlay("Schedule (e.g. hourly, daily, every 4h, @06:00)", "")
-		m.textInputOverlay.SetSize(60, 10)
-		return m, nil
+	// Submitted — validate and save.
+	name, schedule, instructions := m.autoForm.GetValues()
+	if name == "" {
+		m.toastManager.Error("Name cannot be empty")
+		return m, m.toastTickCmd()
+	}
+	if _, err := config.ParseSchedule(schedule); err != nil {
+		m.toastManager.Error("Invalid schedule: " + err.Error())
+		return m, m.toastTickCmd()
+	}
 
-	case 2: // schedule captured — validate
-		schedule := value
-		_, err := config.ParseSchedule(schedule)
-		if err != nil {
-			m.toastManager.Error("Invalid schedule: " + err.Error())
-			// Retry schedule step
-			m.textInputOverlay = overlay.NewTextInputOverlay("Schedule (e.g. hourly, daily, every 4h, @06:00)", schedule)
-			m.textInputOverlay.SetSize(60, 10)
-			return m, m.toastTickCmd()
+	if m.autoEditIdx >= 0 && m.autoEditIdx < len(m.automations) {
+		// Editing existing automation.
+		auto := m.automations[m.autoEditIdx]
+		auto.Name = name
+		auto.Schedule = schedule
+		auto.Instructions = instructions
+		if err := config.SaveAutomations(m.automations); err != nil {
+			return m, m.handleError(err)
 		}
-		auto, err := config.NewAutomation(m.autoCreating.Name, m.autoCreating.Instructions, schedule)
+		m.toastManager.Info(fmt.Sprintf("Automation %q updated", name))
+	} else {
+		// Creating new automation.
+		auto, err := config.NewAutomation(name, instructions, schedule)
 		if err != nil {
 			m.toastManager.Error("Failed to create automation: " + err.Error())
-			m.state = stateAutomations
-			m.autoCreating = nil
 			return m, m.toastTickCmd()
 		}
 		m.automations = append(m.automations, auto)
@@ -2114,14 +2129,12 @@ func (m *home) handleNewAutomationKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if err := config.SaveAutomations(m.automations); err != nil {
 			return m, m.handleError(err)
 		}
-		m.autoCreating = nil
-		m.state = stateAutomations
-		m.toastManager.Info(fmt.Sprintf("Automation %q created", auto.Name))
-		return m, m.toastTickCmd()
+		m.toastManager.Info(fmt.Sprintf("Automation %q created", name))
 	}
 
+	m.autoForm = nil
 	m.state = stateAutomations
-	return m, nil
+	return m, m.toastTickCmd()
 }
 
 func (m *home) handleMemoryBrowserKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
