@@ -85,6 +85,7 @@ func (b *MemoryBrowser) IsEditing() bool { return b.editing }
 
 // EnterEditMode switches the right pane into an editable textarea.
 func (b *MemoryBrowser) EnterEditMode() {
+	b.confirmDelete = false
 	b.editing = true
 	b.originalContent = b.content
 	b.textarea.SetValue(b.content)

@@ -2129,8 +2129,8 @@ func (m *home) handleMemoryBrowserKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.state = stateDefault
 		return m, nil
 	}
-	cmd, close := m.memoryBrowser.HandleKeyPress(msg)
-	if close {
+	cmd, closed := m.memoryBrowser.HandleKeyPress(msg)
+	if closed {
 		m.memoryBrowser = nil
 		m.state = stateDefault
 		return m, tea.WindowSize()
