@@ -195,8 +195,9 @@ type home struct {
 	// Automations
 	automations     []*config.Automation
 	autoSelectedIdx int
-	autoCreating    *config.Automation
-	autoCreateStep  int
+	autoForm    *ui.AutomationForm
+	autoEditIdx int // -1 = new, >=0 = index of automation being edited
+
 
 	// embeddedTerminal is the VT emulator for focus mode (nil when not in focus mode)
 	embeddedTerminal *session.EmbeddedTerminal
@@ -743,7 +744,7 @@ func (m *home) View() string {
 	case m.state == stateSkillPicker && m.pickerOverlay != nil:
 		result = overlay.PlaceOverlay(0, 0, m.pickerOverlay.Render(), mainView, true, true)
 	case m.state == stateAutomations || m.state == stateNewAutomation:
-		autoView := ui.RenderAutomationsList(m.automations, m.autoSelectedIdx, m.width-4, m.height-4)
+		autoView := ui.RenderAutomationsList(m.automations, m.autoSelectedIdx, m.width-4, m.height-4, m.autoForm)
 		if m.textInputOverlay != nil {
 			autoView = overlay.PlaceOverlay(0, 0, m.textInputOverlay.Render(), autoView, true, true)
 		}

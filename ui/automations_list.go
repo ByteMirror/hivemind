@@ -45,25 +45,39 @@ var (
 )
 
 // RenderAutomationsList renders the automations manager as a large modal.
-func RenderAutomationsList(automations []*config.Automation, selectedIdx int, width int, height int) string {
+// When form is non-nil the create/edit form is shown instead of the list.
+func RenderAutomationsList(automations []*config.Automation, selectedIdx int, width int, height int, form *AutomationForm) string {
 	borderFrame := autoBorderStyle.GetHorizontalFrameSize()
+	vertFrame := autoBorderStyle.GetVerticalFrameSize()
 	innerWidth := width - borderFrame
+	innerHeight := height - vertFrame
 	if innerWidth < 20 {
 		innerWidth = 20
 	}
+	if innerHeight < 5 {
+		innerHeight = 5
+	}
 
+	if form != nil {
+		content := form.Render(innerWidth, innerHeight)
+		return autoBorderStyle.Width(innerWidth).Height(innerHeight).Render(content)
+	}
+
+	return renderList(automations, selectedIdx, innerWidth, innerHeight)
+}
+
+func renderList(automations []*config.Automation, selectedIdx int, innerWidth, innerHeight int) string {
 	var sb strings.Builder
 
 	// Header
 	sb.WriteString(autoHeaderStyle.Render("⚡ Automations") + "\n")
-	sb.WriteString(autoHintStyle.Render("n new  e toggle  r run now  d delete  esc close") + "\n")
+	sb.WriteString(autoHintStyle.Render("n new  e edit  t toggle  r run now  d delete  esc close") + "\n")
 	sb.WriteString(autoDividerStyle.Render(strings.Repeat("─", innerWidth)) + "\n\n")
 
 	if len(automations) == 0 {
 		empty := autoDisabledStyle.Render("No automations yet. Press 'n' to create one.\n\nAutomations let you schedule recurring agent tasks — e.g. run a daily\ncode review, sync documentation, or monitor for regressions.")
 		sb.WriteString(empty)
 	} else {
-		// Column header
 		col := renderColumnHeader(innerWidth)
 		sb.WriteString(col + "\n")
 		sb.WriteString(autoDividerStyle.Render(strings.Repeat("─", innerWidth)) + "\n")
@@ -72,12 +86,6 @@ func RenderAutomationsList(automations []*config.Automation, selectedIdx int, wi
 			row := renderAutomationRow(auto, i == selectedIdx, innerWidth)
 			sb.WriteString(row + "\n")
 		}
-	}
-
-	vertFrame := autoBorderStyle.GetVerticalFrameSize()
-	innerHeight := height - vertFrame
-	if innerHeight < 5 {
-		innerHeight = 5
 	}
 
 	return autoBorderStyle.Width(innerWidth).Height(innerHeight).Render(sb.String())

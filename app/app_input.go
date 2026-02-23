@@ -1978,14 +1978,23 @@ func (m *home) handleAutomationsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "n":
-		// Start creation flow: step 0 = name.
-		m.autoCreateStep = 0
-		m.textInputOverlay = overlay.NewTextInputOverlay("Automation name", "")
-		m.textInputOverlay.SetSize(60, 10)
+		m.autoForm = ui.NewAutomationForm("", "", "", false)
+		m.autoEditIdx = -1
 		m.state = stateNewAutomation
 		return m, nil
 
 	case "e":
+		// Open edit form for selected automation.
+		if len(m.automations) == 0 {
+			return m, nil
+		}
+		auto := m.automations[m.autoSelectedIdx]
+		m.autoForm = ui.NewAutomationForm(auto.Name, auto.Schedule, auto.Instructions, true)
+		m.autoEditIdx = m.autoSelectedIdx
+		m.state = stateNewAutomation
+		return m, nil
+
+	case "t":
 		// Toggle enabled/disabled on selected automation.
 		if len(m.automations) == 0 {
 			return m, nil
@@ -2045,65 +2054,50 @@ func (m *home) handleAutomationsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleNewAutomationKeys handles key events in the new-automation creation flow.
-// Steps: 0=name, 1=instructions, 2=schedule.
+// handleNewAutomationKeys handles key events in the inline create/edit form.
 func (m *home) handleNewAutomationKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.textInputOverlay == nil {
+	if m.autoForm == nil {
 		m.state = stateAutomations
 		return m, nil
 	}
 
-	done := m.textInputOverlay.HandleKeyPress(msg)
-	if m.textInputOverlay.Canceled {
-		m.textInputOverlay = nil
-		m.autoCreating = nil
-		m.state = stateAutomations
-		return m, nil
-	}
+	done := m.autoForm.HandleKey(msg)
 	if !done {
 		return m, nil
 	}
 
-	value := m.textInputOverlay.GetValue()
-	m.textInputOverlay = nil
-
-	switch m.autoCreateStep {
-	case 0: // name captured
-		if value == "" {
-			m.toastManager.Error("Automation name cannot be empty")
-			// Retry
-			m.textInputOverlay = overlay.NewTextInputOverlay("Automation name", "")
-			m.textInputOverlay.SetSize(60, 10)
-			return m, m.toastTickCmd()
-		}
-		m.autoCreating = &config.Automation{Name: value}
-		m.autoCreateStep = 1
-		m.textInputOverlay = overlay.NewTextInputOverlay("Instructions (prompt for the agent)", "")
-		m.textInputOverlay.SetSize(60, 15)
+	if m.autoForm.Canceled {
+		m.autoForm = nil
+		m.state = stateAutomations
 		return m, nil
+	}
 
-	case 1: // instructions captured
-		m.autoCreating.Instructions = value
-		m.autoCreateStep = 2
-		m.textInputOverlay = overlay.NewTextInputOverlay("Schedule (e.g. hourly, daily, every 4h, @06:00)", "")
-		m.textInputOverlay.SetSize(60, 10)
-		return m, nil
+	// Submitted — validate and save.
+	name, schedule, instructions := m.autoForm.GetValues()
+	if name == "" {
+		m.toastManager.Error("Name cannot be empty")
+		return m, m.toastTickCmd()
+	}
+	if _, err := config.ParseSchedule(schedule); err != nil {
+		m.toastManager.Error("Invalid schedule: " + err.Error())
+		return m, m.toastTickCmd()
+	}
 
-	case 2: // schedule captured — validate
-		schedule := value
-		_, err := config.ParseSchedule(schedule)
-		if err != nil {
-			m.toastManager.Error("Invalid schedule: " + err.Error())
-			// Retry schedule step
-			m.textInputOverlay = overlay.NewTextInputOverlay("Schedule (e.g. hourly, daily, every 4h, @06:00)", schedule)
-			m.textInputOverlay.SetSize(60, 10)
-			return m, m.toastTickCmd()
+	if m.autoEditIdx >= 0 && m.autoEditIdx < len(m.automations) {
+		// Editing existing automation.
+		auto := m.automations[m.autoEditIdx]
+		auto.Name = name
+		auto.Schedule = schedule
+		auto.Instructions = instructions
+		if err := config.SaveAutomations(m.automations); err != nil {
+			return m, m.handleError(err)
 		}
-		auto, err := config.NewAutomation(m.autoCreating.Name, m.autoCreating.Instructions, schedule)
+		m.toastManager.Info(fmt.Sprintf("Automation %q updated", name))
+	} else {
+		// Creating new automation.
+		auto, err := config.NewAutomation(name, instructions, schedule)
 		if err != nil {
 			m.toastManager.Error("Failed to create automation: " + err.Error())
-			m.state = stateAutomations
-			m.autoCreating = nil
 			return m, m.toastTickCmd()
 		}
 		m.automations = append(m.automations, auto)
@@ -2111,14 +2105,12 @@ func (m *home) handleNewAutomationKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if err := config.SaveAutomations(m.automations); err != nil {
 			return m, m.handleError(err)
 		}
-		m.autoCreating = nil
-		m.state = stateAutomations
-		m.toastManager.Info(fmt.Sprintf("Automation %q created", auto.Name))
-		return m, m.toastTickCmd()
+		m.toastManager.Info(fmt.Sprintf("Automation %q created", name))
 	}
 
+	m.autoForm = nil
 	m.state = stateAutomations
-	return m, nil
+	return m, m.toastTickCmd()
 }
 
 func (m *home) handleMemoryBrowserKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
