@@ -85,11 +85,13 @@ func GetOrCreateRepoManager(slug string) (*memory.Manager, error) {
 			return mgr, nil
 		}
 	}
+	// Capture under read lock to avoid a nil-pointer race after unlock.
+	globalMgrLocal := globalMemMgr
 	factory := memFactory
 	memMu.RUnlock()
 
 	// Compute repo dir from the global manager's parent dir.
-	globalDir := globalMemMgr.Dir() // e.g. ~/.hivemind/memory
+	globalDir := globalMgrLocal.Dir() // safe: local copy captured under read lock
 	repoDir := filepath.Join(globalDir, "repos", slug)
 	if err := os.MkdirAll(repoDir, 0700); err != nil {
 		return nil, fmt.Errorf("create repo memory dir: %w", err)
@@ -120,4 +122,15 @@ func GetOrCreateRepoManager(slug string) (*memory.Manager, error) {
 	}
 	repoMemMgrs[slug] = mgr
 	return mgr, nil
+}
+
+// CloseAllRepoManagers closes and removes all per-repo memory managers.
+// Should be called on TUI shutdown.
+func CloseAllRepoManagers() {
+	memMu.Lock()
+	defer memMu.Unlock()
+	for slug, mgr := range repoMemMgrs {
+		mgr.Close()
+		delete(repoMemMgrs, slug)
+	}
 }

@@ -3,9 +3,12 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/ByteMirror/hivemind/memory"
@@ -29,8 +32,8 @@ func resolveMemoryScope(scope, file string, globalMgr, repoMgr *memory.Manager) 
 		}
 		return globalMgr
 	default:
-		// Auto-detect: dated files (YYYY-MM-DD.md or empty → today's date) → repo;
-		// named files (global.md, MEMORY.md, etc.) → global.
+		// Auto-detect: dated files (YYYY-MM-DD.md or empty -> today's date) -> repo;
+		// named files (global.md, MEMORY.md, etc.) -> global.
 		if file == "" || datedFileRe.MatchString(filepath.Base(file)) {
 			if repoMgr != nil {
 				return repoMgr
@@ -84,8 +87,10 @@ func handleMemoryRead(mgr *memory.Manager) mcpserver.ToolHandlerFunc {
 	}
 }
 
-// handleMemorySearch searches the IDE-wide memory store.
-func handleMemorySearch(mgr *memory.Manager) mcpserver.ToolHandlerFunc {
+// handleMemorySearch searches both the global and (if non-nil) repo memory managers.
+// Results from both are merged, deduplicated by Path+StartLine, sorted by Score, and
+// trimmed to maxResults.
+func handleMemorySearch(globalMgr *memory.Manager, repoMgr *memory.Manager) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
 		Log("tool call: memory_search")
 		query := req.GetString("query", "")
@@ -100,20 +105,55 @@ func handleMemorySearch(mgr *memory.Manager) mcpserver.ToolHandlerFunc {
 			}
 		}
 
-		results, err := mgr.Search(query, memory.SearchOpts{MaxResults: maxResults})
+		// Search global manager.
+		globalResults, err := globalMgr.Search(query, memory.SearchOpts{MaxResults: maxResults})
 		if err != nil {
-			Log("memory_search error: %v", err)
+			Log("memory_search global error: %v", err)
 			return gomcp.NewToolResultError("search failed: " + err.Error()), nil
 		}
 
-		data, _ := json.MarshalIndent(results, "", "  ")
-		Log("memory_search: query=%q results=%d", query, len(results))
+		combined := globalResults
+
+		// Search repo manager if available.
+		if repoMgr != nil {
+			repoResults, err := repoMgr.Search(query, memory.SearchOpts{MaxResults: maxResults})
+			if err != nil {
+				Log("memory_search repo error: %v", err)
+				// Non-fatal: return global results only.
+			} else {
+				// Merge, deduplicating by Path+StartLine.
+				seen := make(map[string]struct{}, len(combined))
+				for _, r := range combined {
+					seen[fmt.Sprintf("%s\x00%d", r.Path, r.StartLine)] = struct{}{}
+				}
+				for _, r := range repoResults {
+					key := fmt.Sprintf("%s\x00%d", r.Path, r.StartLine)
+					if _, ok := seen[key]; !ok {
+						seen[key] = struct{}{}
+						combined = append(combined, r)
+					}
+				}
+			}
+		}
+
+		// Sort merged results by Score descending.
+		sort.Slice(combined, func(i, j int) bool {
+			return combined[i].Score > combined[j].Score
+		})
+		if len(combined) > maxResults {
+			combined = combined[:maxResults]
+		}
+
+		data, _ := json.MarshalIndent(combined, "", "  ")
+		Log("memory_search: query=%q results=%d", query, len(combined))
 		return gomcp.NewToolResultText(string(data)), nil
 	}
 }
 
 // handleMemoryGet reads specific lines from a memory file.
-func handleMemoryGet(mgr *memory.Manager) mcpserver.ToolHandlerFunc {
+// It first tries the global manager's dir; if the file is not found there, it tries the
+// repo manager's dir. The path may optionally include a "repos/{slug}/" prefix.
+func handleMemoryGet(globalMgr *memory.Manager, repoMgr *memory.Manager) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
 		Log("tool call: memory_get")
 		relPath := req.GetString("path", "")
@@ -131,22 +171,45 @@ func handleMemoryGet(mgr *memory.Manager) mcpserver.ToolHandlerFunc {
 			}
 		}
 
-		text, err := mgr.Get(relPath, from, lines)
-		if err != nil {
-			return gomcp.NewToolResultError("failed to read memory file: " + err.Error()), nil
+		// Try global manager first.
+		text, err := globalMgr.Get(relPath, from, lines)
+		if err == nil {
+			return gomcp.NewToolResultText(text), nil
 		}
-		return gomcp.NewToolResultText(text), nil
+
+		// If not found in global, try repo manager.
+		if repoMgr != nil && errors.Is(err, os.ErrNotExist) {
+			repoText, repoErr := repoMgr.Get(relPath, from, lines)
+			if repoErr == nil {
+				return gomcp.NewToolResultText(repoText), nil
+			}
+			// Return original error if repo also failed.
+		}
+
+		return gomcp.NewToolResultError("failed to read memory file: " + err.Error()), nil
 	}
 }
 
-// handleMemoryList lists all memory files (recursive).
-func handleMemoryList(mgr *memory.Manager) mcpserver.ToolHandlerFunc {
+// handleMemoryList lists all memory files from the global manager and (if non-nil) the
+// repo manager, returning a combined result.
+func handleMemoryList(globalMgr *memory.Manager, repoMgr *memory.Manager) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
 		Log("tool call: memory_list")
-		files, err := mgr.List()
+		files, err := globalMgr.List()
 		if err != nil {
 			return gomcp.NewToolResultError("failed to list memory: " + err.Error()), nil
 		}
+
+		if repoMgr != nil {
+			repoFiles, repoErr := repoMgr.List()
+			if repoErr != nil {
+				Log("memory_list repo error: %v", repoErr)
+				// Non-fatal: return global files only.
+			} else {
+				files = append(files, repoFiles...)
+			}
+		}
+
 		data, _ := json.MarshalIndent(files, "", "  ")
 		Log("memory_list: %d files", len(files))
 		return gomcp.NewToolResultText(string(data)), nil
@@ -223,7 +286,7 @@ func handleMemoryMove(mgr *memory.Manager) mcpserver.ToolHandlerFunc {
 		if err := mgr.Move(from, to); err != nil {
 			return gomcp.NewToolResultError("failed to move: " + err.Error()), nil
 		}
-		return gomcp.NewToolResultText(fmt.Sprintf("Moved %s → %s.", from, to)), nil
+		return gomcp.NewToolResultText(fmt.Sprintf("Moved %s -> %s.", from, to)), nil
 	}
 }
 

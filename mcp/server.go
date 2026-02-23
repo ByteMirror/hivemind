@@ -107,7 +107,7 @@ func (h *HivemindMCPServer) registerMemoryTools() {
 			gomcp.Description("Maximum results to return (default 10)."),
 		),
 	)
-	h.server.AddTool(memSearch, handleMemorySearch(mgr))
+	h.server.AddTool(memSearch, handleMemorySearch(mgr, repoMgr))
 
 	memGet := gomcp.NewTool("memory_get",
 		gomcp.WithDescription(
@@ -126,13 +126,13 @@ func (h *HivemindMCPServer) registerMemoryTools() {
 			gomcp.Description("Number of lines to read (default: entire file)."),
 		),
 	)
-	h.server.AddTool(memGet, handleMemoryGet(mgr))
+	h.server.AddTool(memGet, handleMemoryGet(mgr, repoMgr))
 
 	memList := gomcp.NewTool("memory_list",
 		gomcp.WithDescription("List all IDE-wide memory files with metadata."),
 		gomcp.WithReadOnlyHintAnnotation(true),
 	)
-	h.server.AddTool(memList, handleMemoryList(mgr))
+	h.server.AddTool(memList, handleMemoryList(mgr, repoMgr))
 
 	memTree := gomcp.NewTool("memory_tree",
 		gomcp.WithDescription(
