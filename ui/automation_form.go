@@ -10,6 +10,10 @@ import (
 )
 
 var (
+	formTitleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#F0A868")) // no MarginBottom — keep line count predictable
+
 	formLabelStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("#F0A868"))
@@ -145,15 +149,20 @@ func (f *AutomationForm) Render(width, height int) string {
 	f.nameInput.Width = fieldW
 	f.scheduleInput.Width = fieldW
 	f.instrArea.SetWidth(fieldW)
-	instrLines := height - 14 // remaining lines for instructions textarea
-	if instrLines < 3 {
-		instrLines = 3
+	// Fixed lines in Render output (counted precisely, no margins):
+	//   title(1) + divider+blank(2) + name_label(1) + name_field+blank(4)
+	//   + sched_label(1) + sched_hint(1) + sched_field+blank(4)
+	//   + instr_label(1) + instr_field_border(2) + blank(1) + footer(1) = 19
+	const fixedLines = 19
+	instrLines := height - fixedLines
+	if instrLines < 1 {
+		instrLines = 1
 	}
 	f.instrArea.SetHeight(instrLines)
 
 	var sb strings.Builder
 
-	sb.WriteString(autoHeaderStyle.Render("⚡ "+title) + "\n")
+	sb.WriteString(formTitleStyle.Render("⚡ "+title) + "\n")
 	sb.WriteString(autoDividerStyle.Render(strings.Repeat("─", width)) + "\n\n")
 
 	// Name field
