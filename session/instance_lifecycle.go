@@ -281,6 +281,8 @@ func (i *Instance) StartInMainRepo() error {
 
 // Kill terminates the instance and cleans up all resources
 func (i *Instance) Kill() error {
+	// Clear started before the memory prompt so concurrent Kill() calls
+	// short-circuit at the top-of-function check and don't send duplicate prompts.
 	if !i.started.CompareAndSwap(true, false) {
 		return nil // already being killed
 	}

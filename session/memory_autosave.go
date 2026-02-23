@@ -7,10 +7,6 @@ import (
 )
 
 const (
-	// memoryAutoWriteWait is the time we wait after sending the auto-write prompt
-	// before returning (fire-and-forget, not waiting for completion).
-	memoryAutoWriteWait = 1500 * time.Millisecond
-
 	// memoryAutoWriteKillWait is the time we wait between sending the prompt
 	// and actually killing the instance, to give the agent a chance to write.
 	memoryAutoWriteKillWait = 3 * time.Second
@@ -25,16 +21,17 @@ const (
 // SendMemoryAutoWritePrompt sends a final prompt to the agent asking it to
 // persist session learnings to memory. It is fire-and-forget: we do not wait
 // for the agent to respond. Only called when memory is configured.
+//
+// Callers are responsible for ensuring the instance is in a valid state before
+// calling this function (started, not paused, tmux session exists). Kill() uses
+// CompareAndSwap to guarantee single-caller semantics before invoking this.
 func SendMemoryAutoWritePrompt(inst *Instance) error {
 	// Only send the prompt when memory is configured.
 	if getMemoryManager() == nil {
 		return nil
 	}
 
-	// Only act on started, non-paused instances with an active tmux session.
-	if !inst.started.Load() {
-		return nil
-	}
+	// Only act on non-paused instances with an active tmux session.
 	if inst.Status == Paused {
 		return nil
 	}
@@ -47,11 +44,12 @@ func SendMemoryAutoWritePrompt(inst *Instance) error {
 
 	log.InfoLog.Printf("memory-autosave[%s]: sending auto-write prompt", inst.Title)
 
+	// Best-effort: if the agent is mid-task, these keystrokes may go to a child
+	// process rather than Claude's input buffer. We accept this race — the
+	// auto-write is a courtesy prompt, not a guarantee.
 	if err := inst.tmuxSession.SendKeys(memoryAutoWritePrompt); err != nil {
 		return err
 	}
 
-	// Brief pause to give the agent a moment to start processing.
-	time.Sleep(memoryAutoWriteWait)
 	return nil
 }
