@@ -34,6 +34,8 @@ func (m *home) handleBrainAction(action brain.ActionRequest) (tea.Model, tea.Cmd
 		return m.handleActionResumeInstance(action)
 	case brain.ActionKillInstance:
 		return m.handleActionKillInstance(action)
+	case brain.ActionOnboardingComplete:
+		return m.handleActionOnboardingComplete(action)
 	default:
 		action.ResponseCh <- brain.ActionResponse{
 			Error: fmt.Sprintf("unknown action type: %s", action.Type),
@@ -330,4 +332,14 @@ func (m *home) handleActionKillInstance(action brain.ActionRequest) (tea.Model, 
 	log.InfoLog.Printf("brain: killed instance %q", target)
 	action.ResponseCh <- brain.ActionResponse{OK: true}
 	return m, tea.Batch(m.pollBrainActions(), m.instanceChanged())
+}
+
+// handleActionOnboardingComplete marks onboarding as complete and transitions to stateDefault.
+func (m *home) handleActionOnboardingComplete(action brain.ActionRequest) (tea.Model, tea.Cmd) {
+	if err := m.appState.SetOnboarded(true); err != nil {
+		log.ErrorLog.Printf("brain: failed to persist onboarded state: %v", err)
+	}
+	m.state = stateDefault
+	action.ResponseCh <- brain.ActionResponse{OK: true}
+	return m, m.pollBrainActions()
 }
