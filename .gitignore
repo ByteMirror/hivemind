@@ -1,0 +1,6 @@
+.idea
+.aider*
+hivemind
+**.DS_Store
+cs
+worktrees/

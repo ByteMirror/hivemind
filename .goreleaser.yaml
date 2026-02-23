@@ -1,0 +1,77 @@
+version: 2.9
+
+builds:
+  - id: hivemind
+    binary: hivemind
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+  - id: hivemind-mcp
+    binary: hivemind-mcp
+    main: ./cmd/mcp-server/
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+
+archives:
+  - format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    format_overrides:
+      - goos: windows
+        format: zip
+
+brews:
+  - repository:
+      owner: ByteMirror
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_REPO_TOKEN }}"
+    name: hivemind
+    homepage: "https://github.com/ByteMirror/hivemind"
+    description: "Hivemind - A TUI-based agent-driven IDE for managing multiple AI agents"
+    license: "AGPL-3.0"
+    install: |
+      bin.install "hivemind"
+      bin.install "hivemind-mcp"
+    test: |
+      system "#{bin}/hivemind", "version"
+
+scoops:
+  - repository:
+      owner: ByteMirror
+      name: scoop-bucket
+      token: "{{ .Env.HOMEBREW_REPO_TOKEN }}"
+    name: hivemind
+    homepage: "https://github.com/ByteMirror/hivemind"
+    description: "Hivemind - A TUI-based agent-driven IDE for managing multiple AI agents"
+    license: AGPL-3.0
+
+release:
+  prerelease: auto
+  draft: true
+  replace_existing_draft: true
+
+checksum:
+  name_template: 'checksums.txt'
+
+changelog:
+  use: github
+
+  filters:
+    exclude:
+      - "^docs:"
+      - typo
+      - "^refactor"
+      - "^chore"
