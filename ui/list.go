@@ -27,6 +27,7 @@ type List struct {
 	filter       string       // topic name filter (empty = show all)
 	repoFilter   string       // repo path filter (empty = show all repos)
 	statusFilter StatusFilter // status filter (All or Active)
+	chatFilter   *bool       // nil = no filter, false = code only, true = chat only
 	sortMode     SortMode     // how instances are sorted
 	allItems     []*session.Instance
 
@@ -55,6 +56,13 @@ func (l *List) SetFocused(focused bool) {
 // SetStatusFilter sets the status filter and rebuilds the filtered items.
 func (l *List) SetStatusFilter(filter StatusFilter) {
 	l.statusFilter = filter
+	l.rebuildFilteredItems()
+}
+
+// SetChatFilter restricts the visible instances by IsChat flag.
+// nil removes the filter, false shows only code agents, true shows only chat agents.
+func (l *List) SetChatFilter(isChat *bool) {
+	l.chatFilter = isChat
 	l.rebuildFilteredItems()
 }
 
@@ -480,6 +488,18 @@ func (l *List) rebuildFilteredItems() {
 		l.items = filtered
 	} else {
 		l.items = topicFiltered
+	}
+
+	// Apply chat filter (nil = show all, false = code only, true = chat only)
+	if l.chatFilter != nil {
+		wantChat := *l.chatFilter
+		chatFiltered := make([]*session.Instance, 0, len(l.items))
+		for _, inst := range l.items {
+			if inst.IsChat == wantChat {
+				chatFiltered = append(chatFiltered, inst)
+			}
+		}
+		l.items = chatFiltered
 	}
 
 	// Apply sort

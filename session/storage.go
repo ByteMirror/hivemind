@@ -26,6 +26,8 @@ type InstanceData struct {
 	AutomationID    string     `json:"automation_id,omitempty"`
 	PendingReview   bool       `json:"pending_review,omitempty"`
 	CompletedAt     *time.Time `json:"completed_at,omitempty"`
+	IsChat          bool       `json:"is_chat,omitempty"`
+	PersonalityDir  string     `json:"personality_dir,omitempty"`
 
 	Program   string          `json:"program"`
 	Worktree  GitWorktreeData `json:"worktree"`

@@ -36,6 +36,10 @@ type AppState interface {
 	GetHelpScreensSeen() uint32
 	// SetHelpScreensSeen updates the bitmask of seen help screens
 	SetHelpScreensSeen(seen uint32) error
+	// GetOnboarded returns whether the onboarding ritual has been completed.
+	GetOnboarded() bool
+	// SetOnboarded marks onboarding as complete and persists the state.
+	SetOnboarded(onboarded bool) error
 }
 
 // StateManager combines instance storage, topic storage, and app state management
@@ -55,6 +59,8 @@ type State struct {
 	TopicsData json.RawMessage `json:"topics,omitempty"`
 	// RecentRepos stores recently opened repo paths so they persist in the picker
 	RecentRepos []string `json:"recent_repos,omitempty"`
+	// Onboarded indicates the companion bootstrap ritual has been completed.
+	Onboarded bool `json:"onboarded,omitempty"`
 }
 
 // DefaultState returns the default state
@@ -178,5 +184,16 @@ func (s *State) AddRecentRepo(path string) error {
 		}
 	}
 	s.RecentRepos = append(s.RecentRepos, path)
+	return SaveState(s)
+}
+
+// GetOnboarded returns whether the onboarding ritual has been completed.
+func (s *State) GetOnboarded() bool {
+	return s.Onboarded
+}
+
+// SetOnboarded marks onboarding as complete and persists the state.
+func (s *State) SetOnboarded(onboarded bool) error {
+	s.Onboarded = onboarded
 	return SaveState(s)
 }

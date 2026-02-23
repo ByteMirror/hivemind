@@ -89,6 +89,18 @@ const (
 	stateNewAutomation
 	// stateMemoryBrowser is the state when the memory file browser is open.
 	stateMemoryBrowser
+	// stateOnboarding is shown on first ever launch until the companion completes setup.
+	stateOnboarding
+	// stateNewChatAgent is the state when the user is naming a new chat agent.
+	stateNewChatAgent
+)
+
+// sidebarTab identifies which tab is active in the sidebar.
+type sidebarTab int
+
+const (
+	sidebarTabCode sidebarTab = iota
+	sidebarTabChat
 )
 
 type home struct {
@@ -159,6 +171,8 @@ type home struct {
 	allTopics []*session.Topic
 	// focusedPanel tracks which panel has keyboard focus (0=sidebar, 1=instance list)
 	focusedPanel int
+	// sidebarTab tracks which tab is active in the sidebar (Code or Chat)
+	sidebarTab sidebarTab
 	// pendingTopicName stores the topic name during the two-step creation flow
 	pendingTopicName string
 	// pendingTopicRepoPath stores the repo path during multi-repo topic creation
@@ -217,6 +231,9 @@ type home struct {
 
 	// brainServer is the IPC server for coordinating brain state between MCP agents
 	brainServer *brain.Server
+
+	// onboardingContent caches the companion instance terminal output for viewOnboarding.
+	onboardingContent string
 }
 
 func newHome(ctx context.Context, program string, autoYes bool) *home {
@@ -293,6 +310,8 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 			}
 		}
 	}
+	// Apply initial chat filter (default tab is Code, so hide chat agents)
+	h.refreshListChatFilter()
 
 	// Load topics
 	topics, err := storage.LoadTopics()
@@ -334,6 +353,11 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 		}
 	}
 
+	// First-launch detection: start in stateOnboarding if companion setup not done.
+	if !h.appState.GetOnboarded() {
+		h.state = stateOnboarding
+	}
+
 	return h
 }
 
@@ -345,6 +369,42 @@ func (m *home) instanceMatchesActiveRepos(inst *session.Instance) bool {
 		return m.activeRepoSet()[m.primaryRepoPath]
 	}
 	return m.activeRepoSet()[repoPath]
+}
+
+// visibleInstances returns instances filtered by the active sidebar tab.
+// Code tab shows only non-chat agents; Chat tab shows only chat agents.
+func (m *home) visibleInstances() []*session.Instance {
+	switch m.sidebarTab {
+	case sidebarTabChat:
+		out := make([]*session.Instance, 0)
+		for _, inst := range m.allInstances {
+			if inst.IsChat {
+				out = append(out, inst)
+			}
+		}
+		return out
+	default: // sidebarTabCode
+		out := make([]*session.Instance, 0)
+		for _, inst := range m.allInstances {
+			if !inst.IsChat {
+				out = append(out, inst)
+			}
+		}
+		return out
+	}
+}
+
+// refreshListChatFilter updates the list chat filter based on the active sidebar tab.
+// This is called whenever the sidebar tab changes.
+func (m *home) refreshListChatFilter() {
+	switch m.sidebarTab {
+	case sidebarTabChat:
+		isChat := true
+		m.list.SetChatFilter(&isChat)
+	default: // sidebarTabCode
+		isChat := false
+		m.list.SetChatFilter(&isChat)
+	}
 }
 
 // activeRepoSet returns an O(1) lookup set of active repo paths.
@@ -426,6 +486,12 @@ func (m *home) Init() tea.Cmd {
 		cmds = append(cmds, m.pollBrainActions())
 	}
 
+	// If first launch, start the onboarding companion.
+	if m.state == stateOnboarding {
+		_, cmd := m.startOnboarding()
+		cmds = append(cmds, cmd)
+	}
+
 	return tea.Batch(cmds...)
 }
 
@@ -452,6 +518,14 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tabbedWindow.UpdateDiff(selected)
 		// Preview: cheap states handled synchronously, running instances fetched async
 		previewCmd := m.asyncUpdatePreview(selected)
+		// During onboarding, also refresh the companion terminal content.
+		if m.state == stateOnboarding {
+			if companion := m.findInstanceByTitle("companion"); companion != nil && companion.Started() {
+				if c, err := companion.Preview(); err == nil {
+					m.onboardingContent = c
+				}
+			}
+		}
 		return m, tea.Batch(previewCmd, func() tea.Msg {
 			time.Sleep(100 * time.Millisecond)
 			return previewTickMsg{}
@@ -628,6 +702,12 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list.KillInstanceByTitle(msg.title)
 		m.updateSidebarItems()
 		return m, m.instanceChanged()
+	case onboardingStartedMsg:
+		if msg.err != nil {
+			log.WarningLog.Printf("onboarding: companion failed to start: %v", msg.err)
+		}
+		// Trigger a window size update so layout is recalculated for the companion view.
+		return m, tea.WindowSize()
 	case instanceResumedMsg:
 		if msg.err != nil {
 			if msg.wasDead {
@@ -679,6 +759,11 @@ func (m *home) handleQuit() (tea.Model, tea.Cmd) {
 }
 
 func (m *home) View() string {
+	// Onboarding takes over the full screen.
+	if m.state == stateOnboarding {
+		return m.viewOnboarding()
+	}
+
 	// All columns use identical padding and height for uniform alignment.
 	colStyle := lipgloss.NewStyle().PaddingTop(1).Height(m.contentHeight + 1)
 	sidebarView := colStyle.Render(m.sidebar.String())
@@ -717,6 +802,8 @@ func (m *home) View() string {
 			pickerY = 2
 		}
 		result = overlay.PlaceOverlay(pickerX, pickerY, m.pickerOverlay.Render(), mainView, true, false)
+	case m.state == stateNewChatAgent && m.textInputOverlay != nil:
+		result = overlay.PlaceOverlay(0, 0, m.textInputOverlay.Render(), mainView, true, true)
 	case m.state == stateNewTopicRepo && m.pickerOverlay != nil:
 		result = overlay.PlaceOverlay(0, 0, m.pickerOverlay.Render(), mainView, true, true)
 	case m.state == stateNewTopic && m.textInputOverlay != nil:

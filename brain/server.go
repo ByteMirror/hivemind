@@ -249,6 +249,9 @@ func (s *Server) dispatch(req Request) Response {
 	case MethodKillInstance:
 		return s.sendAction(ActionKillInstance, req.Params)
 
+	case MethodOnboardingComplete:
+		return s.sendAction(ActionOnboardingComplete, nil)
+
 	case MethodDefineWorkflow:
 		return s.dispatchDefineWorkflow(req)
 

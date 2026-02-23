@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 )
 
-// atomicWriteFile writes data to a temporary file and then renames it to the
+// AtomicWriteFile writes data to a temporary file and then renames it to the
 // target path. This prevents partial writes from corrupting the file if the
 // process crashes or is interrupted mid-write.
-func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp")
 	if err != nil {
@@ -48,4 +48,10 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	}
 
 	return nil
+}
+
+// atomicWriteFile is a package-local alias kept for backward compatibility
+// within the config package.
+func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	return AtomicWriteFile(path, data, perm)
 }

@@ -92,6 +92,8 @@ type Sidebar struct {
 	searchActive bool
 	searchQuery  string
 
+	activeTab   int    // 0 = Code, 1 = Chat
+
 	repoName    string // current repo name shown at bottom
 	repoHovered bool   // true when mouse is hovering over the repo button
 
@@ -412,6 +414,12 @@ func (s *Sidebar) IsSearchActive() bool    { return s.searchActive }
 func (s *Sidebar) GetSearchQuery() string  { return s.searchQuery }
 func (s *Sidebar) SetSearchQuery(q string) { s.searchQuery = q }
 
+// SetTab sets the active sidebar tab (0 = Code, 1 = Chat).
+func (s *Sidebar) SetTab(tab int) { s.activeTab = tab }
+
+// ActiveTab returns the index of the currently active sidebar tab.
+func (s *Sidebar) ActiveTab() int { return s.activeTab }
+
 func (s *Sidebar) String() string {
 	borderStyle := sidebarBorderStyle
 	if s.focused {
@@ -445,6 +453,27 @@ func (s *Sidebar) String() string {
 		b.WriteString(searchActiveBarStyle.Width(searchWidth).Render(searchText))
 	} else {
 		b.WriteString(searchBarStyle.Width(searchWidth).Render("\uf002 search"))
+	}
+	b.WriteString("\n")
+
+	// Tab bar: Code / Chat
+	{
+		tabCodeLabel := "  Code  "
+		tabChatLabel := "  Chat  "
+		var activeTabStyle = lipgloss.NewStyle().
+			Underline(true).
+			Foreground(lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#ffffff"})
+		var inactiveTabStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{Light: "#888888", Dark: "#666666"})
+		var codeTab, chatTab string
+		if s.activeTab == 0 {
+			codeTab = activeTabStyle.Render(tabCodeLabel)
+			chatTab = inactiveTabStyle.Render(tabChatLabel)
+		} else {
+			codeTab = inactiveTabStyle.Render(tabCodeLabel)
+			chatTab = activeTabStyle.Render(tabChatLabel)
+		}
+		b.WriteString(codeTab + chatTab)
 	}
 	b.WriteString("\n\n")
 
