@@ -75,6 +75,11 @@ func RunDaemon(cfg *config.Config) error {
 				}
 			}
 
+			// Automation schedule check.
+			if brainServer != nil {
+				checkAutomations(brainServer)
+			}
+
 			// Handle stop before ticker.
 			select {
 			case <-stopCh:
@@ -184,4 +189,60 @@ func StopDaemon() error {
 
 	log.InfoLog.Printf("daemon process (PID: %d) stopped successfully", pid)
 	return nil
+}
+
+// checkAutomations loads automations, fires any that are due, and persists updated timestamps.
+func checkAutomations(brainServer *brain.Server) {
+	now := time.Now()
+
+	automations, err := config.LoadAutomations()
+	if err != nil {
+		log.WarningLog.Printf("daemon: failed to load automations: %v", err)
+		return
+	}
+
+	changed := false
+	for _, auto := range automations {
+		if !auto.Enabled {
+			continue
+		}
+		if !now.After(auto.NextRun) {
+			continue
+		}
+		// This automation is due — trigger it.
+		if err := triggerAutomation(brainServer, auto); err != nil {
+			log.WarningLog.Printf("daemon: failed to trigger automation %q: %v", auto.Name, err)
+		} else {
+			log.InfoLog.Printf("daemon: triggered automation %q", auto.Name)
+		}
+
+		// Update LastRun and recompute NextRun regardless of trigger success.
+		auto.LastRun = now
+		next, err := config.NextRunTime(auto.Schedule, now, now)
+		if err != nil {
+			log.WarningLog.Printf("daemon: failed to compute next run for automation %q: %v", auto.Name, err)
+			next = now.Add(time.Hour) // fallback: retry in 1h
+		}
+		auto.NextRun = next
+		changed = true
+	}
+
+	if changed {
+		if err := config.SaveAutomations(automations); err != nil {
+			log.WarningLog.Printf("daemon: failed to save automations: %v", err)
+		}
+	}
+}
+
+// triggerAutomation sends a CreateInstance action to the brain server with the
+// automation's ID set so the resulting instance lands in the Review Queue.
+func triggerAutomation(brainServer *brain.Server, auto *config.Automation) error {
+	skipPerms := true
+	params := brain.CreateInstanceParams{
+		Title:           fmt.Sprintf("%s-%d", auto.Name, time.Now().Unix()),
+		Prompt:          auto.Instructions,
+		SkipPermissions: &skipPerms,
+		AutomationID:    auto.ID,
+	}
+	return brainServer.CreateInstanceDirect(params)
 }

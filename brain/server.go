@@ -1,6 +1,7 @@
 package brain
 
 import (
+	"fmt"
 	"bufio"
 	"encoding/json"
 	"errors"
@@ -533,4 +534,34 @@ func writeResponse(conn net.Conn, resp Response) {
 	}
 	data = append(data, '\n')
 	conn.Write(data)
+}
+
+// CreateInstanceDirect allows the daemon (or any in-process caller) to trigger
+// instance creation without going through the Unix socket. It mirrors the path
+// taken by the MethodCreateInstance socket handler: it builds a params map and
+// sends an ActionCreateInstance request to the TUI via the action channel.
+func (s *Server) CreateInstanceDirect(params CreateInstanceParams) error {
+	p := map[string]any{
+		"title":         params.Title,
+		"prompt":        params.Prompt,
+		"automation_id": params.AutomationID,
+	}
+	if params.Program != "" {
+		p["program"] = params.Program
+	}
+	if params.Role != "" {
+		p["role"] = params.Role
+	}
+	if params.Topic != "" {
+		p["topic"] = params.Topic
+	}
+	if params.SkipPermissions != nil {
+		p["skip_permissions"] = *params.SkipPermissions
+	}
+
+	resp := s.sendAction(ActionCreateInstance, p)
+	if !resp.OK {
+		return fmt.Errorf("CreateInstanceDirect: %s", resp.Error)
+	}
+	return nil
 }

@@ -405,6 +405,16 @@ func (l *List) String() string {
 	b.WriteString("\n")
 	b.WriteString("\n")
 
+	// Render the Review Queue section (automation instances awaiting review).
+	selectedTitle := ""
+	if sel := l.GetSelectedInstance(); sel != nil {
+		selectedTitle = sel.Title
+	}
+	if reviewSection := RenderReviewSection(l.allItems, selectedTitle, l.width); reviewSection != "" {
+		b.WriteString(reviewSection)
+		b.WriteString("\n")
+	}
+
 	// Render the list.
 	for i, item := range l.items {
 		var opts []renderOpt
@@ -455,4 +465,67 @@ func (l *List) GetItemAtRow(row int) int {
 		currentRow += h + 1 // +1 for the blank line gap between items
 	}
 	return -1
+}
+
+var (
+	reviewSectionStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#F0A868")).
+		Bold(true)
+	reviewItemStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#22c55e"))
+	reviewItemSelectedStyle = lipgloss.NewStyle().
+		Background(lipgloss.Color("#22c55e")).
+		Foreground(lipgloss.Color("#1a1a1a")).
+		Bold(true)
+)
+
+// RenderReviewSection renders the "REVIEW QUEUE" header + items for instances
+// with PendingReview == true. Returns empty string if no review items.
+func RenderReviewSection(instances []*session.Instance, selectedTitle string, width int) string {
+	var pending []*session.Instance
+	for _, inst := range instances {
+		if inst.PendingReview {
+			pending = append(pending, inst)
+		}
+	}
+	if len(pending) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	header := reviewSectionStyle.Render("─ REVIEW QUEUE ")
+	b.WriteString(header + "\n")
+
+	for _, inst := range pending {
+		isSelected := inst.Title == selectedTitle
+
+		// Build stats string
+		stats := ""
+		if ds := inst.GetDiffStats(); ds != nil && (ds.Added > 0 || ds.Removed > 0) {
+			stats = fmt.Sprintf(" +%d/-%d", ds.Added, ds.Removed)
+		}
+
+		age := ""
+		if inst.CompletedAt != nil {
+			d := time.Since(*inst.CompletedAt)
+			switch {
+			case d < time.Minute:
+				age = "just now"
+			case d < time.Hour:
+				age = fmt.Sprintf("%dm ago", int(d.Minutes()))
+			default:
+				age = fmt.Sprintf("%dh ago", int(d.Hours()))
+			}
+		}
+
+		label := fmt.Sprintf("✓ %-20s%s  %s", inst.Title, stats, age)
+		label = runewidth.Truncate(label, width-2, "…")
+
+		if isSelected {
+			b.WriteString(reviewItemSelectedStyle.Render(" "+label) + "\n")
+		} else {
+			b.WriteString(reviewItemStyle.Render(" "+label) + "\n")
+		}
+	}
+	return b.String()
 }
