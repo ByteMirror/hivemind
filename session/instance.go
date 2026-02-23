@@ -65,6 +65,15 @@ type Instance struct {
 	// Empty for manually created (top-level) instances.
 	ParentTitle string
 
+	// AutomationID is set when this instance was spawned by an automation.
+	// Empty for manually-created instances.
+	AutomationID string
+	// PendingReview is true when this automation-triggered instance has finished
+	// and is waiting for the user to review its diff.
+	PendingReview bool
+	// CompletedAt is when the instance transitioned Running -> Ready as an automation result.
+	CompletedAt *time.Time
+
 	// BrainChildCount is the number of brain-spawned child instances (set by TUI, not persisted).
 	BrainChildCount int
 
@@ -137,6 +146,9 @@ func (i *Instance) ToInstanceData() InstanceData {
 		TopicName:       i.TopicName,
 		Role:            i.Role,
 		ParentTitle:     i.ParentTitle,
+		AutomationID:    i.AutomationID,
+		PendingReview:   i.PendingReview,
+		CompletedAt:     i.CompletedAt,
 	}
 
 	// Only include worktree data if gitWorktree is initialized
@@ -179,6 +191,9 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 		TopicName:       data.TopicName,
 		Role:            data.Role,
 		ParentTitle:     data.ParentTitle,
+		AutomationID:    data.AutomationID,
+		PendingReview:   data.PendingReview,
+		CompletedAt:     data.CompletedAt,
 		gitWorktree: git.NewGitWorktreeFromStorage(
 			data.Worktree.RepoPath,
 			data.Worktree.WorktreePath,
@@ -223,6 +238,8 @@ type InstanceOptions struct {
 	Role string
 	// ParentTitle is the title of the parent agent that spawned this instance.
 	ParentTitle string
+	// AutomationID links this instance to the automation that spawned it.
+	AutomationID string
 }
 
 func NewInstance(opts InstanceOptions) (*Instance, error) {
@@ -248,6 +265,7 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		TopicName:       opts.TopicName,
 		Role:            opts.Role,
 		ParentTitle:     opts.ParentTitle,
+		AutomationID:    opts.AutomationID,
 	}, nil
 }
 
