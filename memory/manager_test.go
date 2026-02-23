@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -65,4 +66,33 @@ func TestManager_ListReturnsChunkCount(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 	assert.GreaterOrEqual(t, files[0].ChunkCount, 2)
+}
+
+func TestManager_SearchFTSOnly(t *testing.T) {
+	mgr := newTestManager(t)
+	require.NoError(t, mgr.Write("The user prefers Go over Python.", "prefs.md"))
+	require.NoError(t, mgr.Write("Project Hivemind uses Bubble Tea for TUI.", "projects.md"))
+
+	results, err := mgr.Search("Go language preference", SearchOpts{MaxResults: 5})
+	require.NoError(t, err)
+	// At least one result should mention Go
+	found := false
+	for _, r := range results {
+		if strings.Contains(r.Snippet, "Go") {
+			found = true
+		}
+	}
+	assert.True(t, found, "expected to find Go-related memory")
+}
+
+func TestManager_SearchReturnsSnippets(t *testing.T) {
+	mgr := newTestManager(t)
+	require.NoError(t, mgr.Write("# User Setup\n\nMacBook Pro M3, 32GB RAM, macOS Sequoia.", "setup.md"))
+
+	results, err := mgr.Search("user computer hardware", SearchOpts{MaxResults: 5})
+	require.NoError(t, err)
+	if len(results) > 0 {
+		assert.NotEmpty(t, results[0].Snippet)
+		assert.LessOrEqual(t, len(results[0].Snippet), snippetMaxChars+10)
+	}
 }
