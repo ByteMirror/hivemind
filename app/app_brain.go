@@ -51,6 +51,7 @@ func (m *home) handleActionCreateInstance(action brain.ActionRequest) (tea.Model
 	topic, _ := action.Params["topic"].(string)
 	sourceInstance, _ := action.Params["source_instance"].(string)
 	role, _ := action.Params["role"].(string)
+	automationID, _ := action.Params["automation_id"].(string)
 
 	if title == "" {
 		action.ResponseCh <- brain.ActionResponse{Error: "title is required"}
@@ -102,6 +103,7 @@ func (m *home) handleActionCreateInstance(action brain.ActionRequest) (tea.Model
 		SkipPermissions: skipPerms,
 		Role:            role,
 		ParentTitle:     sourceInstance,
+		AutomationID:    automationID,
 	})
 	if err != nil {
 		action.ResponseCh <- brain.ActionResponse{Error: "failed to create instance: " + err.Error()}

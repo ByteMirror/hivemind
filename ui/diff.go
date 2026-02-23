@@ -46,6 +46,15 @@ type fileChunk struct {
 	diff    string
 }
 
+
+// LineComment is an annotation attached to a specific line in the diff.
+type LineComment struct {
+	File    string // relative file path
+	Line    int    // 0-based index into the rendered diff content
+	Marker  string // "+", "-", or " "
+	Code    string // the line being commented on (trimmed)
+	Comment string // user's comment text
+}
 type DiffPane struct {
 	viewport viewport.Model
 	width    int
@@ -61,6 +70,11 @@ type DiffPane struct {
 
 	// sidebarWidth is computed from file names
 	sidebarWidth int
+
+	// Comment mode
+	commentMode   bool
+	commentCursor int                      // 0-based line index in current diff view
+	comments      map[string][]LineComment // filePath → comments
 }
 
 func NewDiffPane() *DiffPane {
@@ -150,13 +164,53 @@ func (d *DiffPane) rebuildViewport() {
 	if len(d.files) == 0 {
 		return
 	}
-	var diff string
+	var rawDiff string
 	if d.selectedFile < 0 {
-		diff = d.fullDiff
+		rawDiff = d.fullDiff
 	} else if d.selectedFile < len(d.files) {
-		diff = colorizeDiff(d.files[d.selectedFile].diff)
+		rawDiff = d.files[d.selectedFile].diff
 	}
-	d.viewport.SetContent(diff)
+	diff := colorizeDiff(rawDiff)
+
+	if !d.commentMode {
+		d.viewport.SetContent(diff)
+		return
+	}
+
+	// Comment mode: annotate with cursor indicator and comment annotations.
+	cursorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#F0A868")).Bold(true)
+	commentAnnotationStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#F0A868")).
+		Italic(true)
+
+	// Build a line→comment map for the current file.
+	var currentFile string
+	if d.selectedFile >= 0 && d.selectedFile < len(d.files) {
+		currentFile = d.files[d.selectedFile].path
+	}
+	lineCommentMap := make(map[int]string)
+	if d.comments != nil {
+		for _, c := range d.comments[currentFile] {
+			lineCommentMap[c.Line] = c.Comment
+		}
+	}
+
+	coloredLines := strings.Split(diff, "\n")
+	rawLines := strings.Split(rawDiff, "\n")
+	var out strings.Builder
+	for i, line := range coloredLines {
+		if i == d.commentCursor {
+			out.WriteString(cursorStyle.Render("▶ ") + line + "\n")
+		} else {
+			out.WriteString("  " + line + "\n")
+		}
+		// Show raw line for comment map lookup
+		_ = rawLines
+		if annotation, ok := lineCommentMap[i]; ok {
+			out.WriteString(commentAnnotationStyle.Render("  │ ★ "+annotation) + "\n")
+		}
+	}
+	d.viewport.SetContent(out.String())
 }
 
 func (d *DiffPane) String() string {
@@ -337,6 +391,124 @@ func (d *DiffPane) GetSelectedFilePath() string {
 		return ""
 	}
 	return d.files[d.selectedFile].path
+}
+
+
+// AddComment adds a comment annotation to the given file at the given line index.
+func (d *DiffPane) AddComment(file string, line int, marker, code, comment string) {
+	if d.comments == nil {
+		d.comments = make(map[string][]LineComment)
+	}
+	d.comments[file] = append(d.comments[file], LineComment{
+		File: file, Line: line, Marker: marker, Code: code, Comment: comment,
+	})
+}
+
+// GetComments returns all stored comments, keyed by file path.
+func (d *DiffPane) GetComments() map[string][]LineComment {
+	if d.comments == nil {
+		return map[string][]LineComment{}
+	}
+	return d.comments
+}
+
+// ClearComments removes all stored comments.
+func (d *DiffPane) ClearComments() {
+	d.comments = nil
+}
+
+// HasComments returns true if there is at least one comment stored.
+func (d *DiffPane) HasComments() bool {
+	for _, cs := range d.comments {
+		if len(cs) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// FormatCommentsMessage formats all comments as a structured prompt message
+// suitable for injection into the agent's terminal.
+func (d *DiffPane) FormatCommentsMessage() string {
+	if !d.HasComments() {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Code review feedback on your changes:\n\n")
+	for file, cs := range d.comments {
+		for _, c := range cs {
+			b.WriteString(fmt.Sprintf("[%s +%d] `%s`\n  → %s\n\n", file, c.Line, c.Code, c.Comment))
+		}
+	}
+	b.WriteString("Please address these comments and continue.")
+	return b.String()
+}
+
+// EnterCommentMode enters comment mode, resetting the cursor to line 0.
+func (d *DiffPane) EnterCommentMode() {
+	d.commentMode = true
+	d.commentCursor = 0
+}
+
+// ExitCommentMode exits comment mode.
+func (d *DiffPane) ExitCommentMode() {
+	d.commentMode = false
+}
+
+// IsCommentMode returns true when comment mode is active.
+func (d *DiffPane) IsCommentMode() bool {
+	return d.commentMode
+}
+
+// CommentCursorDown moves the comment cursor down one line.
+func (d *DiffPane) CommentCursorDown() {
+	diff := d.currentRawDiff()
+	lines := strings.Split(diff, "\n")
+	if d.commentCursor < len(lines)-1 {
+		d.commentCursor++
+	}
+	d.rebuildViewport()
+}
+
+// CommentCursorUp moves the comment cursor up one line.
+func (d *DiffPane) CommentCursorUp() {
+	if d.commentCursor > 0 {
+		d.commentCursor--
+	}
+	d.rebuildViewport()
+}
+
+// currentRawDiff returns the raw (uncolorized) diff for the currently selected file/view.
+func (d *DiffPane) currentRawDiff() string {
+	if d.selectedFile < 0 {
+		return d.fullDiff
+	}
+	if d.selectedFile < len(d.files) {
+		return d.files[d.selectedFile].diff
+	}
+	return ""
+}
+
+// GetCursorLineInfo returns the file, marker, and code for the current cursor line.
+// Returns empty strings if line is not a diff line (e.g. hunk header).
+func (d *DiffPane) GetCursorLineInfo() (file, marker, code string, lineIdx int) {
+	// Use the selected file path
+	if d.selectedFile >= 0 && d.selectedFile < len(d.files) {
+		file = d.files[d.selectedFile].path
+	}
+	diff := d.currentRawDiff()
+	lines := strings.Split(diff, "\n")
+	if d.commentCursor < len(lines) {
+		line := lines[d.commentCursor]
+		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+			return file, "+", strings.TrimPrefix(line, "+"), d.commentCursor
+		}
+		if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
+			return file, "-", strings.TrimPrefix(line, "-"), d.commentCursor
+		}
+		return file, " ", line, d.commentCursor
+	}
+	return file, " ", "", d.commentCursor
 }
 
 // parseFileChunks splits a unified diff into per-file chunks with stats.
