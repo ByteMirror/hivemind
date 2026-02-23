@@ -16,7 +16,8 @@ const serverInstructions = "You are running inside Hivemind, a multi-agent orche
 	"For complex multi-step tasks, use define_workflow to create a task DAG with dependencies, " +
 	"and complete_task to mark tasks as done (which auto-triggers dependent tasks). " +
 	"To wait for sub-agents to finish, use wait_for_events instead of polling get_brain in a loop. " +
-	"It long-polls for real-time events (status changes, messages, workflow triggers) with no missed events."
+	"It long-polls for real-time events (status changes, messages, workflow triggers) with no missed events." +
+	"\n\nThis IDE has a persistent memory store. ALWAYS call memory_search before answering questions about the user's preferences, environment setup, active projects, or past decisions. Call memory_write whenever you discover something worth remembering across sessions."
 
 // HivemindMCPServer wraps an MCP server with Hivemind-specific state.
 type HivemindMCPServer struct {
