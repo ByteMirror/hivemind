@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ByteMirror/hivemind/brain"
@@ -840,7 +841,16 @@ func (m *home) View() string {
 	case m.state == stateSkillPicker && m.pickerOverlay != nil:
 		result = overlay.PlaceOverlay(0, 0, m.pickerOverlay.Render(), mainView, true, true)
 	case m.state == stateAutomations || m.state == stateNewAutomation:
-		autoView := ui.RenderAutomationsList(m.automations, m.autoSelectedIdx, m.width-4, m.height-4, m.autoForm)
+		// Size modal relative to the actual mainView dimensions so it always fits
+		// inside PlaceOverlay's background (which clips at bg size).
+		bgH := strings.Count(mainView, "\n") + 1
+		bgW := m.width
+		modalH := bgH - 4 // 2-line margin top+bottom
+		modalW := bgW - 4 // 2-char margin left+right
+		if modalH < 10 {
+			modalH = 10
+		}
+		autoView := ui.RenderAutomationsList(m.automations, m.autoSelectedIdx, modalW, modalH, m.autoForm)
 		if m.textInputOverlay != nil {
 			autoView = overlay.PlaceOverlay(0, 0, m.textInputOverlay.Render(), autoView, true, true)
 		}
