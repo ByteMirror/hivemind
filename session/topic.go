@@ -22,37 +22,63 @@ func NewTopicTask(text string) TopicTask {
 	}
 }
 
+// TopicWorktreeMode controls how instances in a topic interact with git.
+type TopicWorktreeMode string
+
+const (
+	// TopicWorktreeModePerInstance gives each instance its own branch + worktree directory.
+	TopicWorktreeModePerInstance TopicWorktreeMode = "per_instance"
+	// TopicWorktreeModeShared makes all instances share one branch + worktree directory.
+	TopicWorktreeModeShared TopicWorktreeMode = "shared"
+	// TopicWorktreeModeMainRepo runs instances directly in the repo directory with no worktree.
+	TopicWorktreeModeMainRepo TopicWorktreeMode = "main_repo"
+)
+
 // Topic groups related instances, optionally sharing a single git worktree.
 type Topic struct {
-	Name           string
-	SharedWorktree bool
-	AutoYes        bool
-	Branch         string
-	Path           string
-	CreatedAt      time.Time
-	Notes          string
-	Tasks          []TopicTask
-	gitWorktree    *git.GitWorktree
-	started        bool
+	Name         string
+	WorktreeMode TopicWorktreeMode
+	AutoYes      bool
+	Branch       string
+	Path         string
+	CreatedAt    time.Time
+	Notes        string
+	Tasks        []TopicTask
+	gitWorktree  *git.GitWorktree
+	started      bool
+}
+
+// IsSharedWorktree reports whether all instances in this topic share one worktree.
+func (t *Topic) IsSharedWorktree() bool {
+	return t.WorktreeMode == TopicWorktreeModeShared
+}
+
+// IsMainRepo reports whether instances in this topic run directly in the repo directory.
+func (t *Topic) IsMainRepo() bool {
+	return t.WorktreeMode == TopicWorktreeModeMainRepo
 }
 
 type TopicOptions struct {
-	Name           string
-	SharedWorktree bool
-	Path           string
+	Name         string
+	WorktreeMode TopicWorktreeMode
+	Path         string
 }
 
 func NewTopic(opts TopicOptions) *Topic {
+	mode := opts.WorktreeMode
+	if mode == "" {
+		mode = TopicWorktreeModePerInstance
+	}
 	return &Topic{
-		Name:           opts.Name,
-		SharedWorktree: opts.SharedWorktree,
-		Path:           opts.Path,
-		CreatedAt:      time.Now(),
+		Name:         opts.Name,
+		WorktreeMode: mode,
+		Path:         opts.Path,
+		CreatedAt:    time.Now(),
 	}
 }
 
 func (t *Topic) Setup() error {
-	if !t.SharedWorktree {
+	if t.WorktreeMode != TopicWorktreeModeShared {
 		t.started = true
 		return nil
 	}

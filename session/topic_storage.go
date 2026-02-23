@@ -8,8 +8,11 @@ import (
 
 // TopicData represents the serializable data of a Topic.
 type TopicData struct {
-	Name           string          `json:"name"`
-	SharedWorktree bool            `json:"shared_worktree"`
+	Name         string            `json:"name"`
+	WorktreeMode TopicWorktreeMode `json:"worktree_mode,omitempty"`
+	// SharedWorktree is kept for backwards-compatible JSON deserialization.
+	// New writes use WorktreeMode instead.
+	SharedWorktree bool            `json:"shared_worktree,omitempty"`
 	AutoYes        bool            `json:"auto_yes"`
 	Branch         string          `json:"branch,omitempty"`
 	Path           string          `json:"path"`
@@ -22,14 +25,14 @@ type TopicData struct {
 // ToTopicData converts a Topic to its serializable form.
 func (t *Topic) ToTopicData() TopicData {
 	data := TopicData{
-		Name:           t.Name,
-		SharedWorktree: t.SharedWorktree,
-		AutoYes:        t.AutoYes,
-		Branch:         t.Branch,
-		Path:           t.Path,
-		CreatedAt:      t.CreatedAt,
-		Notes:          t.Notes,
-		Tasks:          t.Tasks,
+		Name:         t.Name,
+		WorktreeMode: t.WorktreeMode,
+		AutoYes:      t.AutoYes,
+		Branch:       t.Branch,
+		Path:         t.Path,
+		CreatedAt:    t.CreatedAt,
+		Notes:        t.Notes,
+		Tasks:        t.Tasks,
 	}
 	if t.gitWorktree != nil {
 		data.Worktree = GitWorktreeData{
@@ -45,18 +48,27 @@ func (t *Topic) ToTopicData() TopicData {
 
 // FromTopicData creates a Topic from serialized data.
 func FromTopicData(data TopicData) *Topic {
-	topic := &Topic{
-		Name:           data.Name,
-		SharedWorktree: data.SharedWorktree,
-		AutoYes:        data.AutoYes,
-		Branch:         data.Branch,
-		Path:           data.Path,
-		CreatedAt:      data.CreatedAt,
-		Notes:          data.Notes,
-		Tasks:          data.Tasks,
-		started:        true,
+	// Migrate legacy SharedWorktree bool to WorktreeMode.
+	mode := data.WorktreeMode
+	if mode == "" {
+		if data.SharedWorktree {
+			mode = TopicWorktreeModeShared
+		} else {
+			mode = TopicWorktreeModePerInstance
+		}
 	}
-	if data.SharedWorktree && data.Worktree.WorktreePath != "" {
+	topic := &Topic{
+		Name:         data.Name,
+		WorktreeMode: mode,
+		AutoYes:      data.AutoYes,
+		Branch:       data.Branch,
+		Path:         data.Path,
+		CreatedAt:    data.CreatedAt,
+		Notes:        data.Notes,
+		Tasks:        data.Tasks,
+		started:      true,
+	}
+	if mode == TopicWorktreeModeShared && data.Worktree.WorktreePath != "" {
 		topic.gitWorktree = git.NewGitWorktreeFromStorage(
 			data.Worktree.RepoPath,
 			data.Worktree.WorktreePath,
