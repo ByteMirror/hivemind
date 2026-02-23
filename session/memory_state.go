@@ -35,3 +35,9 @@ func getMemoryInjectCount() int {
 	}
 	return globalMemCount
 }
+
+// GetMemoryManager returns the application-wide memory manager, or nil if memory is disabled.
+// It is safe for concurrent use.
+func GetMemoryManager() *memory.Manager {
+	return getMemoryManager()
+}

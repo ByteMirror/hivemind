@@ -24,7 +24,7 @@ func (m *home) handleMenuHighlighting(msg tea.KeyMsg) (cmd tea.Cmd, returnEarly 
 		m.keySent = false
 		return nil, false
 	}
-	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateNewTopic || m.state == stateNewTopicConfirm || m.state == stateSearch || m.state == stateMoveTo || m.state == stateContextMenu || m.state == statePRTitle || m.state == statePRBody || m.state == stateRenameInstance || m.state == stateRenameTopic || m.state == stateSendPrompt || m.state == stateFocusAgent || m.state == stateRepoSwitch || m.state == stateNewTopicRepo || m.state == stateCommandPalette || m.state == stateSettings || m.state == stateSkillPicker || m.state == stateInlineComment || m.state == stateAutomations || m.state == stateNewAutomation {
+	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateNewTopic || m.state == stateNewTopicConfirm || m.state == stateSearch || m.state == stateMoveTo || m.state == stateContextMenu || m.state == statePRTitle || m.state == statePRBody || m.state == stateRenameInstance || m.state == stateRenameTopic || m.state == stateSendPrompt || m.state == stateFocusAgent || m.state == stateRepoSwitch || m.state == stateNewTopicRepo || m.state == stateCommandPalette || m.state == stateSettings || m.state == stateSkillPicker || m.state == stateInlineComment || m.state == stateAutomations || m.state == stateNewAutomation || m.state == stateMemoryBrowser {
 		return nil, false
 	}
 	// If it's in the global keymap, we should try to highlight it.
@@ -361,6 +361,8 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m.handleAutomationsKeys(msg)
 	case stateNewAutomation:
 		return m.handleNewAutomationKeys(msg)
+	case stateMemoryBrowser:
+		return m.handleMemoryBrowserKeys(msg)
 	default:
 		return m.handleDefaultKeys(msg)
 	}
@@ -1637,9 +1639,12 @@ func (m *home) handleDefaultKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setFocus(0)
 		m.list.SetFilter("") // Show all instances
 		return m, nil
+	case keys.KeyMemoryBrowser:
+		return m.openMemoryBrowser()
 	default:
 		// Check raw key string for features without a named key binding.
-		if msg.String() == "A" {
+		switch msg.String() {
+		case "A":
 			m.state = stateAutomations
 			return m, nil
 		}
@@ -2117,4 +2122,18 @@ func (m *home) handleNewAutomationKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	m.state = stateAutomations
 	return m, nil
+}
+
+func (m *home) handleMemoryBrowserKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.memoryBrowser == nil {
+		m.state = stateDefault
+		return m, nil
+	}
+	cmd, closed := m.memoryBrowser.HandleKeyPress(msg)
+	if closed {
+		m.memoryBrowser = nil
+		m.state = stateDefault
+		return m, tea.WindowSize()
+	}
+	return m, cmd
 }

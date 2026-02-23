@@ -87,6 +87,8 @@ const (
 	stateAutomations
 	// stateNewAutomation is the state when the user is creating a new automation (multi-step).
 	stateNewAutomation
+	// stateMemoryBrowser is the state when the memory file browser is open.
+	stateMemoryBrowser
 )
 
 type home struct {
@@ -179,6 +181,8 @@ type home struct {
 	commandPalette *overlay.CommandPalette
 	// settingsOverlay is the settings configuration overlay
 	settingsOverlay *overlay.SettingsOverlay
+	// memoryBrowser is the memory file browser screen.
+	memoryBrowser *ui.MemoryBrowser
 
 	// Layout dimensions for mouse hit-testing
 	sidebarWidth  int
@@ -390,6 +394,9 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	}
 	if m.textOverlay != nil {
 		m.textOverlay.SetWidth(int(float32(msg.Width) * 0.6))
+	}
+	if m.memoryBrowser != nil {
+		m.memoryBrowser.SetSize(msg.Width, m.contentHeight)
 	}
 
 	previewWidth, previewHeight := m.tabbedWindow.GetPreviewSize()
@@ -739,6 +746,8 @@ func (m *home) View() string {
 			mainView = overlay.PlaceOverlay(0, 0, m.textInputOverlay.Render(), mainView, true, true)
 		}
 		result = mainView
+	case m.state == stateMemoryBrowser && m.memoryBrowser != nil:
+		result = m.memoryBrowser.Render()
 	case m.state == stateContextMenu && m.contextMenu != nil:
 		cx, cy := m.contextMenu.GetPosition()
 		result = overlay.PlaceOverlay(cx, cy, m.contextMenu.Render(), mainView, true, false)
