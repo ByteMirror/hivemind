@@ -60,6 +60,7 @@ const (
 	KeyAutoYes // Key for toggling auto-accept on instance or topic
 
 	KeyCommandPalette // Key for opening command palette
+	KeyMemoryBrowser  // Key for opening the memory file browser
 
 	// Diff keybindings
 	KeyShiftUp
@@ -109,6 +110,7 @@ var GlobalKeyStringsMap = map[string]KeyName{
 	"Z":           KeyZenMode,
 	"y":           KeyAutoYes,
 	"ctrl+p":      KeyCommandPalette,
+	"M":           KeyMemoryBrowser,
 }
 
 // GlobalkeyBindings is a global, immutable map of KeyName tot keybinding.
@@ -256,6 +258,10 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	KeyCommandPalette: key.NewBinding(
 		key.WithKeys("ctrl+p"),
 		key.WithHelp("^P", "commands"),
+	),
+	KeyMemoryBrowser: key.NewBinding(
+		key.WithKeys("M"),
+		key.WithHelp("M", "memory"),
 	),
 
 	// -- Special keybindings --
