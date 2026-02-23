@@ -50,6 +50,9 @@ func (m *Manager) SetReranker(r Reranker) {
 	m.reranker = r
 }
 
+// Dir returns the root directory of the memory store.
+func (m *Manager) Dir() string { return m.dir }
+
 // Write appends content to a named memory file and triggers re-indexing.
 // If file is empty, the default is today's date (YYYY-MM-DD.md).
 func (m *Manager) Write(content, file string) error {
