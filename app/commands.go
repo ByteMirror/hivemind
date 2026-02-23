@@ -8,6 +8,7 @@ import (
 	"github.com/ByteMirror/hivemind/log"
 	"github.com/ByteMirror/hivemind/memory"
 	"github.com/ByteMirror/hivemind/session"
+	"github.com/ByteMirror/hivemind/ui"
 	"github.com/ByteMirror/hivemind/ui/overlay"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -47,6 +48,7 @@ func (m *home) buildCommandItems() []overlay.CommandItem {
 
 		// System
 		{Label: "Settings", Description: "Configure application settings", Shortcut: "", Category: "System", Action: "cmd_settings"},
+		{Label: "Memory Browser", Description: "Browse, edit and delete memory files", Shortcut: "M", Category: "System", Action: "cmd_memory_browser"},
 		{Label: "Help", Description: "Show keyboard shortcuts", Shortcut: "?", Category: "System", Action: "cmd_help"},
 	}
 
@@ -103,6 +105,8 @@ func (m *home) executeCommandPaletteAction(action string) (tea.Model, tea.Cmd) {
 		return m.handleDefaultKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
 	case "cmd_settings":
 		return m.openSettings()
+	case "cmd_memory_browser":
+		return m.openMemoryBrowser()
 	case "cmd_help":
 		return m.showHelpScreen(helpTypeGeneral{}, nil)
 	}
@@ -278,6 +282,23 @@ func (m *home) openSettings() (tea.Model, tea.Cmd) {
 	items = append(items, buildMemorySettingItems(m.appConfig)...)
 	m.settingsOverlay = overlay.NewSettingsOverlay(items)
 	m.state = stateSettings
+	return m, nil
+}
+
+// openMemoryBrowser opens the full-screen memory file browser.
+func (m *home) openMemoryBrowser() (tea.Model, tea.Cmd) {
+	mgr := session.GetMemoryManager()
+	if mgr == nil {
+		m.toastManager.Info("Memory is disabled. Enable it in Settings.")
+		return m, m.toastTickCmd()
+	}
+	browser, err := ui.NewMemoryBrowser(mgr)
+	if err != nil {
+		return m, m.handleError(fmt.Errorf("open memory browser: %w", err))
+	}
+	browser.SetSize(m.width, m.contentHeight)
+	m.memoryBrowser = browser
+	m.state = stateMemoryBrowser
 	return m, nil
 }
 
