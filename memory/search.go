@@ -3,6 +3,8 @@ package memory
 import (
 	"fmt"
 	"math"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -13,6 +15,11 @@ type scoredResult struct {
 	vectorScore float32
 	bm25Score   float32
 }
+
+// datedFileRe matches filenames of the form YYYY-MM-DD.md (dated journal files).
+// Only these files are subject to temporal decay; evergreen files like
+// global.md, MEMORY.md, hivemind-project.md are exempt.
+var datedFileRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}\.md$`)
 
 // Search performs hybrid search: FTS5 BM25 + optional cosine similarity,
 // followed by optional Claude-based re-ranking.
@@ -257,6 +264,12 @@ func normalizeScores(results []scoredResult, isBM25 bool) []scoredResult {
 func applyTemporalDecay(results []scoredResult, m *Manager) []scoredResult {
 	now := float64(time.Now().UnixMilli())
 	for i := range results {
+		// Only apply temporal decay to dated files (YYYY-MM-DD.md).
+		// Evergreen files like global.md, MEMORY.md, hivemind-project.md
+		// contain stable facts that remain relevant forever and must not decay.
+		if !datedFileRe.MatchString(filepath.Base(results[i].Path)) {
+			continue
+		}
 		var mtime int64
 		row := m.db.QueryRow("SELECT mtime FROM files WHERE path=?", results[i].Path)
 		if err := row.Scan(&mtime); err != nil {
