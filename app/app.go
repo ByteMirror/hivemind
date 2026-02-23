@@ -758,6 +758,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *home) handleQuit() (tea.Model, tea.Cmd) {
+	session.WaitForAllClosing(30 * time.Second)
 	if m.brainServer != nil {
 		m.brainServer.Stop()
 	}
