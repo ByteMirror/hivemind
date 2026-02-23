@@ -74,7 +74,7 @@ func upsertMemorySection(claudeMDPath, section string) error {
 	endIdx := strings.Index(existing, memoryInjectFooter)
 
 	var updated string
-	if startIdx >= 0 && endIdx >= 0 {
+	if startIdx >= 0 && endIdx > startIdx {
 		// Replace existing block.
 		updated = existing[:startIdx] + section + existing[endIdx+len(memoryInjectFooter)+1:]
 	} else {
