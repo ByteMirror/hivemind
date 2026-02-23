@@ -46,7 +46,6 @@ type fileChunk struct {
 	diff    string
 }
 
-
 // LineComment is an annotation attached to a specific line in the diff.
 type LineComment struct {
 	File    string // relative file path
@@ -392,7 +391,6 @@ func (d *DiffPane) GetSelectedFilePath() string {
 	}
 	return d.files[d.selectedFile].path
 }
-
 
 // AddComment adds a comment annotation to the given file at the given line index.
 func (d *DiffPane) AddComment(file string, line int, marker, code, comment string) {

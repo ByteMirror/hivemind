@@ -129,11 +129,11 @@ const branchIcon = "\uf126"
 
 // roleIcons maps agent roles to Nerd Font icons.
 var roleIcons = map[string]string{
-	"coder":     "\uf121",  //  (code)
-	"reviewer":  "\uf002",  //  (search/review)
-	"architect": "\uf1b2",  //  (cube/architecture)
-	"tester":    "\uf0c3",  //  (flask/test)
-	"writer":    "\uf040",  //  (pencil/edit)
+	"coder":     "\uf121", //  (code)
+	"reviewer":  "\uf002", //  (search/review)
+	"architect": "\uf1b2", //  (cube/architecture)
+	"tester":    "\uf0c3", //  (flask/test)
+	"writer":    "\uf040", //  (pencil/edit)
 }
 
 // roleIconFallback is used when role is set but not in the map.

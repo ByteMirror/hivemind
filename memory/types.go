@@ -2,7 +2,7 @@ package memory
 
 // SearchResult is one match returned from a memory search.
 type SearchResult struct {
-	Path      string  // relative to memory dir, e.g. "global.md"
+	Path      string // relative to memory dir, e.g. "global.md"
 	StartLine int
 	EndLine   int
 	Score     float32 // 0.0–1.0 combined score

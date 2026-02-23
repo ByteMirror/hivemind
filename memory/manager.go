@@ -15,7 +15,7 @@ const snippetMaxChars = 700
 // Manager is the primary interface for IDE-wide memory operations.
 // It is safe for concurrent use from multiple goroutines (or processes via WAL).
 type Manager struct {
-	dir      string           // ~/.hivemind/memory/
+	dir      string // ~/.hivemind/memory/
 	db       *sql.DB
 	provider EmbeddingProvider // nil == FTS-only
 	reranker Reranker          // optional; nil == no reranking

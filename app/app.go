@@ -188,11 +188,10 @@ type home struct {
 	width         int // full terminal width
 
 	// Automations
-	automations    []*config.Automation
+	automations     []*config.Automation
 	autoSelectedIdx int
-	autoCreating   *config.Automation
-	autoCreateStep int
-
+	autoCreating    *config.Automation
+	autoCreateStep  int
 
 	// embeddedTerminal is the VT emulator for focus mode (nil when not in focus mode)
 	embeddedTerminal *session.EmbeddedTerminal
@@ -367,7 +366,7 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 		sidebarWidth = 20
 	}
 	listAlloc := int(float32(msg.Width) * 0.20) // full allocation including gaps
-	listWidth := listAlloc - 2*columnGap         // actual list content width
+	listWidth := listAlloc - 2*columnGap        // actual list content width
 	tabsWidth := msg.Width - sidebarWidth - listAlloc
 
 	// Menu takes 10% of height, list and window take 90%

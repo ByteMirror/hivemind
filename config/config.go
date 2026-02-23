@@ -76,7 +76,11 @@ type Config struct {
 func DefaultConfig() *Config {
 	program, err := GetClaudeCommand()
 	if err != nil {
-		log.ErrorLog.Printf("failed to get claude command: %v", err)
+		if log.ErrorLog != nil {
+			log.ErrorLog.Printf("failed to get claude command: %v", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "failed to get claude command: %v\n", err)
+		}
 		program = defaultProgram
 	}
 
@@ -88,7 +92,11 @@ func DefaultConfig() *Config {
 		BranchPrefix: func() string {
 			user, err := user.Current()
 			if err != nil || user == nil || user.Username == "" {
-				log.ErrorLog.Printf("failed to get current user: %v", err)
+				if log.ErrorLog != nil {
+					log.ErrorLog.Printf("failed to get current user: %v", err)
+				} else {
+					fmt.Fprintf(os.Stderr, "failed to get current user: %v\n", err)
+				}
 				return "session/"
 			}
 			return fmt.Sprintf("%s/", strings.ToLower(user.Username))

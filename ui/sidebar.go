@@ -68,7 +68,6 @@ var sidebarReadyStyle = lipgloss.NewStyle().
 var sidebarNotifyStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("#F0A868"))
 
-
 // SidebarItem represents a selectable item in the sidebar.
 type SidebarItem struct {
 	Name            string
@@ -98,9 +97,9 @@ type Sidebar struct {
 
 	// Repo button screen-relative bounds (set during render).
 	// Coordinates are relative to the sidebar's top-left (0,0).
-	repoBtnTop, repoBtnBot int
+	repoBtnTop, repoBtnBot    int
 	repoBtnLeft, repoBtnRight int
-	repoBtnVisible bool
+	repoBtnVisible            bool
 }
 
 func NewSidebar() *Sidebar {
@@ -621,10 +620,10 @@ func (s *Sidebar) String() string {
 		// positioning (more reliable than counting content lines from the top).
 		// Sidebar layout: row 0 = top border, rows 1..borderHeight = content,
 		// row borderHeight+1 = bottom border. Button is the last repoLines of content.
-		s.repoBtnBot = borderHeight                  // last content row
-		s.repoBtnTop = borderHeight - repoLines + 1  // first button row
-		s.repoBtnLeft = 2                             // border(1) + left padding(1)
-		s.repoBtnRight = 2 + contentWidth - 1         // button fills contentWidth
+		s.repoBtnBot = borderHeight                 // last content row
+		s.repoBtnTop = borderHeight - repoLines + 1 // first button row
+		s.repoBtnLeft = 2                           // border(1) + left padding(1)
+		s.repoBtnRight = 2 + contentWidth - 1       // button fills contentWidth
 		s.repoBtnVisible = true
 	}
 

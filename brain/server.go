@@ -1,10 +1,10 @@
 package brain
 
 import (
-	"fmt"
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"sync"
@@ -352,11 +352,11 @@ func (s *Server) dispatchDefineWorkflow(req Request) Response {
 			continue
 		}
 		s.sendAction(ActionCreateInstance, map[string]any{
-			"title":            task.ID,
-			"prompt":           task.Prompt,
-			"role":             task.Role,
-			"source_instance":  req.InstanceID,
-			"_from_workflow":   true,
+			"title":           task.ID,
+			"prompt":          task.Prompt,
+			"role":            task.Role,
+			"source_instance": req.InstanceID,
+			"_from_workflow":  true,
 		})
 	}
 
@@ -402,11 +402,11 @@ func (s *Server) dispatchCompleteTask(req Request) Response {
 			continue
 		}
 		s.sendAction(ActionCreateInstance, map[string]any{
-			"title":            task.ID,
-			"prompt":           task.Prompt,
-			"role":             task.Role,
-			"source_instance":  req.InstanceID,
-			"_from_workflow":   true,
+			"title":           task.ID,
+			"prompt":          task.Prompt,
+			"role":            task.Role,
+			"source_instance": req.InstanceID,
+			"_from_workflow":  true,
 		})
 	}
 

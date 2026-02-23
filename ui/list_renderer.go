@@ -78,7 +78,6 @@ func (r *InstanceRenderer) Render(i *session.Instance, selected bool, focused bo
 		}
 	}
 
-
 	// add spinner next to title if it's running
 	var join string
 	switch i.Status {
@@ -469,14 +468,14 @@ func (l *List) GetItemAtRow(row int) int {
 
 var (
 	reviewSectionStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#F0A868")).
-		Bold(true)
+				Foreground(lipgloss.Color("#F0A868")).
+				Bold(true)
 	reviewItemStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#22c55e"))
+			Foreground(lipgloss.Color("#22c55e"))
 	reviewItemSelectedStyle = lipgloss.NewStyle().
-		Background(lipgloss.Color("#22c55e")).
-		Foreground(lipgloss.Color("#1a1a1a")).
-		Bold(true)
+				Background(lipgloss.Color("#22c55e")).
+				Foreground(lipgloss.Color("#1a1a1a")).
+				Bold(true)
 )
 
 // RenderReviewSection renders the "REVIEW QUEUE" header + items for instances
