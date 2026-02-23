@@ -82,7 +82,7 @@ func (m *Manager) Search(query string, opts SearchOpts) ([]SearchResult, error) 
 		candidates, _ = m.reranker.Rerank(query, candidates) // graceful fallback on error
 	}
 
-	// 6. Trim to MaxResults and apply min score filter.
+	// 7. Trim to MaxResults and apply min score filter.
 	var out []SearchResult
 	for _, r := range candidates {
 		if r.Score >= opts.MinScore {

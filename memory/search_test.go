@@ -42,6 +42,28 @@ func TestApplyTemporalDecay_DatedFileDecays(t *testing.T) {
 		"dated file score should be reduced by temporal decay")
 }
 
+// TestApplyTemporalDecay_DatedFileWithDirPrefix verifies that a dated file
+// stored under a subdirectory (e.g. "repos/project/2026-01-01.md") is still
+// subject to temporal decay. This ensures filepath.Base correctly strips the
+// directory component before the YYYY-MM-DD.md regex runs.
+func TestApplyTemporalDecay_DatedFileWithDirPrefix(t *testing.T) {
+	mgr := newTestManager(t)
+
+	const relPath = "repos/project/2026-01-01.md"
+	require.NoError(t, mgr.Write("Old project note.", relPath))
+	setFileMtime(t, mgr, relPath, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+
+	original := float32(1.0)
+	results := []scoredResult{
+		{SearchResult: SearchResult{Path: relPath, Score: original}},
+	}
+
+	decayed := applyTemporalDecay(results, mgr)
+	require.Len(t, decayed, 1)
+	assert.Less(t, decayed[0].Score, original,
+		"dated file under a directory prefix should be reduced by temporal decay")
+}
+
 // TestApplyTemporalDecay_EvergreenFileExempt verifies that a non-dated
 // evergreen file (e.g. global.md, MEMORY.md) is NOT affected by decay,
 // even when the file is very old.
