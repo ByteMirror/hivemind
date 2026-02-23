@@ -21,12 +21,12 @@ const lazygitTmuxPrefix = "hivemind_lazygit_"
 // When switching instances, the old session is killed to avoid accumulating
 // background lazygit processes (each runs file watchers and periodic git polls).
 type GitPane struct {
-	mu              sync.Mutex
-	sessions        map[string]string // instanceTitle -> tmux session name
-	term            *session.EmbeddedTerminal
+	mu                   sync.Mutex
+	sessions             map[string]string // instanceTitle -> tmux session name
+	term                 *session.EmbeddedTerminal
 	currentInstanceTitle string
-	width, height   int
-	errorMsg        string
+	width, height        int
+	errorMsg             string
 }
 
 // NewGitPane creates a new GitPane (no subprocess yet).

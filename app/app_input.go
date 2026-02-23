@@ -1657,7 +1657,7 @@ func (m *home) handleFocusModeMouseEvent(msg tea.MouseMsg) (tea.Model, tea.Cmd) 
 		Border(lipgloss.RoundedBorder(), true).
 		GetVerticalFrameSize() + 1
 	contentOriginX := m.sidebarWidth + m.listWidth + 1 + 1 // +1 for left window border, +1 for left window padding
-	contentOriginY := 1 + tabHeight                    // PaddingTop + tab bar
+	contentOriginY := 1 + tabHeight                        // PaddingTop + tab bar
 
 	// Translate to pane-relative coordinates (1-based for SGR).
 	relX := msg.X - contentOriginX + 1
@@ -1890,7 +1890,6 @@ func (m *home) keydownCallback(name keys.KeyName) tea.Cmd {
 		return keyupMsg{}
 	}
 }
-
 
 // handleReviewActions handles c/p/s/d keys for a PendingReview instance.
 // Returns the model with a changed identity only when an action was taken.

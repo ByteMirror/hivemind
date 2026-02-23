@@ -10,6 +10,7 @@ import (
 	"github.com/ByteMirror/hivemind/brain"
 	"github.com/ByteMirror/hivemind/config"
 	"github.com/ByteMirror/hivemind/log"
+	"github.com/ByteMirror/hivemind/memory"
 	"github.com/ByteMirror/hivemind/session"
 	"github.com/ByteMirror/hivemind/ui"
 	"github.com/ByteMirror/hivemind/ui/overlay"
@@ -187,11 +188,10 @@ type home struct {
 	width         int // full terminal width
 
 	// Automations
-	automations    []*config.Automation
+	automations     []*config.Automation
 	autoSelectedIdx int
-	autoCreating   *config.Automation
-	autoCreateStep int
-
+	autoCreating    *config.Automation
+	autoCreateStep  int
 
 	// embeddedTerminal is the VT emulator for focus mode (nil when not in focus mode)
 	embeddedTerminal *session.EmbeddedTerminal
@@ -217,6 +217,22 @@ type home struct {
 func newHome(ctx context.Context, program string, autoYes bool) *home {
 	// Load application config
 	appConfig := config.LoadConfig()
+
+	// Initialize IDE memory manager for agent startup injection.
+	if memMgr, err := memory.NewManagerFromConfig(appConfig); err != nil {
+		log.WarningLog.Printf("memory init: %v", err)
+	} else if memMgr != nil {
+		injectCount := 5
+		if appConfig.Memory != nil && appConfig.Memory.StartupInjectCount > 0 {
+			injectCount = appConfig.Memory.StartupInjectCount
+		}
+		session.SetMemoryManager(memMgr, injectCount)
+		if stop, err := memMgr.StartWatcher(); err != nil {
+			log.WarningLog.Printf("memory watcher: %v", err)
+		} else {
+			_ = stop // stopped when process exits
+		}
+	}
 
 	// Load application state
 	appState := config.LoadState()
@@ -350,7 +366,7 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 		sidebarWidth = 20
 	}
 	listAlloc := int(float32(msg.Width) * 0.20) // full allocation including gaps
-	listWidth := listAlloc - 2*columnGap         // actual list content width
+	listWidth := listAlloc - 2*columnGap        // actual list content width
 	tabsWidth := msg.Width - sidebarWidth - listAlloc
 
 	// Menu takes 10% of height, list and window take 90%

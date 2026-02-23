@@ -38,11 +38,11 @@ type List struct {
 
 func NewList(spinner *spinner.Model, autoYes bool) *List {
 	return &List{
-		items:    []*session.Instance{},
-		renderer: &InstanceRenderer{spinner: spinner},
-		repos:    make(map[string]int),
-		autoyes:  autoYes,
-		focused:  true,
+		items:         []*session.Instance{},
+		renderer:      &InstanceRenderer{spinner: spinner},
+		repos:         make(map[string]int),
+		autoyes:       autoYes,
+		focused:       true,
 		expanded:      make(map[string]bool),
 		childExpanded: make(map[string]bool),
 	}

@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"github.com/ByteMirror/hivemind/memory"
 	gomcp "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
@@ -15,7 +16,13 @@ const serverInstructions = "You are running inside Hivemind, a multi-agent orche
 	"For complex multi-step tasks, use define_workflow to create a task DAG with dependencies, " +
 	"and complete_task to mark tasks as done (which auto-triggers dependent tasks). " +
 	"To wait for sub-agents to finish, use wait_for_events instead of polling get_brain in a loop. " +
-	"It long-polls for real-time events (status changes, messages, workflow triggers) with no missed events."
+	"It long-polls for real-time events (status changes, messages, workflow triggers) with no missed events." +
+	"\n\nThis IDE has a persistent memory store shared across all sessions and projects.\n" +
+	"Rules:\n" +
+	"- Call memory_search at the start of every session and before answering questions about the user's preferences, setup, past decisions, or active projects.\n" +
+	"- Call memory_write whenever you learn something durable: user setup, preferences, project decisions, recurring patterns.\n" +
+	"- Write stable facts (hardware, OS, global preferences) to global.md. Write dated notes to the default YYYY-MM-DD.md.\n" +
+	"- Never assume you know the user's preferences — search first."
 
 // HivemindMCPServer wraps an MCP server with Hivemind-specific state.
 type HivemindMCPServer struct {
@@ -25,10 +32,11 @@ type HivemindMCPServer struct {
 	instanceID  string // used by Tier 2 introspection tools
 	repoPath    string // scopes brain and instance listing to this repo
 	tier        int    // gates tool registration: 1=read, 2=+introspect, 3=+write
+	memoryMgr   *memory.Manager
 }
 
 // NewHivemindMCPServer creates a new MCP server for a Hivemind agent.
-func NewHivemindMCPServer(brainClient BrainClient, hivemindDir, instanceID, repoPath string, tier int) *HivemindMCPServer {
+func NewHivemindMCPServer(brainClient BrainClient, hivemindDir, instanceID, repoPath string, tier int, memMgr *memory.Manager) *HivemindMCPServer {
 	s := mcpserver.NewMCPServer(
 		"hivemind",
 		"0.1.0",
@@ -42,6 +50,7 @@ func NewHivemindMCPServer(brainClient BrainClient, hivemindDir, instanceID, repo
 		instanceID:  instanceID,
 		repoPath:    repoPath,
 		tier:        tier,
+		memoryMgr:   memMgr,
 	}
 
 	h.registerTier1Tools()
@@ -51,9 +60,73 @@ func NewHivemindMCPServer(brainClient BrainClient, hivemindDir, instanceID, repo
 	if tier >= 3 {
 		h.registerTier3Tools()
 	}
+	if memMgr != nil {
+		h.registerMemoryTools()
+	}
 
 	Log("server created: tier=%d tools registered", tier)
 	return h
+}
+
+// registerMemoryTools registers the IDE-wide memory tools (all tiers).
+func (h *HivemindMCPServer) registerMemoryTools() {
+	mgr := h.memoryMgr
+
+	memWrite := gomcp.NewTool("memory_write",
+		gomcp.WithDescription(
+			"Write to IDE-wide memory. "+
+				"Use this whenever you discover something worth remembering across sessions: "+
+				"user preferences, project facts, environment setup, API keys configured, "+
+				"decisions made and their rationale.",
+		),
+		gomcp.WithString("content",
+			gomcp.Required(),
+			gomcp.Description("The fact or note to save. Plain text or Markdown."),
+		),
+		gomcp.WithString("file",
+			gomcp.Description("Target filename in ~/.hivemind/memory/ (default: YYYY-MM-DD.md)."),
+		),
+	)
+	h.server.AddTool(memWrite, handleMemoryWrite(mgr))
+
+	memSearch := gomcp.NewTool("memory_search",
+		gomcp.WithDescription(
+			"Search IDE-wide memory before answering questions about prior work, "+
+				"user preferences, project setups, or past decisions. "+
+				"Returns ranked snippets with file path and line numbers.",
+		),
+		gomcp.WithString("query",
+			gomcp.Required(),
+			gomcp.Description("Natural language search query."),
+		),
+		gomcp.WithNumber("max_results",
+			gomcp.Description("Maximum results to return (default 10)."),
+		),
+	)
+	h.server.AddTool(memSearch, handleMemorySearch(mgr))
+
+	memGet := gomcp.NewTool("memory_get",
+		gomcp.WithDescription(
+			"Read specific lines from a memory file. "+
+				"Use after memory_search to pull only the relevant lines.",
+		),
+		gomcp.WithString("path",
+			gomcp.Required(),
+			gomcp.Description("Relative path within ~/.hivemind/memory/ (from memory_search results)."),
+		),
+		gomcp.WithNumber("from",
+			gomcp.Description("Start line number (1-indexed, default 1)."),
+		),
+		gomcp.WithNumber("lines",
+			gomcp.Description("Number of lines to read (default: entire file)."),
+		),
+	)
+	h.server.AddTool(memGet, handleMemoryGet(mgr))
+
+	memList := gomcp.NewTool("memory_list",
+		gomcp.WithDescription("List all IDE-wide memory files with metadata."),
+	)
+	h.server.AddTool(memList, handleMemoryList(mgr))
 }
 
 // registerTier1Tools registers read-only Tier 1 tools.

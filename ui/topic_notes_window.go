@@ -52,12 +52,12 @@ func (w *TopicNotesWindow) SetActiveTab(tab int) {
 		w.activeTab = tab
 	}
 }
-func (w *TopicNotesWindow) Toggle()                          { w.activeTab = (w.activeTab + 1) % 2 }
-func (w *TopicNotesWindow) IsInNotesTab() bool               { return w.activeTab == TopicTabNotes }
-func (w *TopicNotesWindow) IsInTasksTab() bool               { return w.activeTab == TopicTabTasks }
-func (w *TopicNotesWindow) TaskCount() int                   { return len(w.tasks) }
-func (w *TopicNotesWindow) SelectedTask() int                { return w.selectedTask }
-func (w *TopicNotesWindow) GetTasks() []session.TopicTask    { return w.tasks }
+func (w *TopicNotesWindow) Toggle()                       { w.activeTab = (w.activeTab + 1) % 2 }
+func (w *TopicNotesWindow) IsInNotesTab() bool            { return w.activeTab == TopicTabNotes }
+func (w *TopicNotesWindow) IsInTasksTab() bool            { return w.activeTab == TopicTabTasks }
+func (w *TopicNotesWindow) TaskCount() int                { return len(w.tasks) }
+func (w *TopicNotesWindow) SelectedTask() int             { return w.selectedTask }
+func (w *TopicNotesWindow) GetTasks() []session.TopicTask { return w.tasks }
 
 func (w *TopicNotesWindow) TaskUp() {
 	if w.selectedTask > 0 {

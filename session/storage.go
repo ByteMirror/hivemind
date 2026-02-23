@@ -10,22 +10,22 @@ import (
 
 // InstanceData represents the serializable data of an Instance
 type InstanceData struct {
-	Title           string    `json:"title"`
-	Path            string    `json:"path"`
-	Branch          string    `json:"branch"`
-	Status          Status    `json:"status"`
-	Height          int       `json:"height"`
-	Width           int       `json:"width"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
-	AutoYes         bool      `json:"auto_yes"`
-	SkipPermissions bool      `json:"skip_permissions"`
-	TopicName       string    `json:"topic_name,omitempty"`
-	Role            string    `json:"role,omitempty"`
+	Title           string     `json:"title"`
+	Path            string     `json:"path"`
+	Branch          string     `json:"branch"`
+	Status          Status     `json:"status"`
+	Height          int        `json:"height"`
+	Width           int        `json:"width"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	AutoYes         bool       `json:"auto_yes"`
+	SkipPermissions bool       `json:"skip_permissions"`
+	TopicName       string     `json:"topic_name,omitempty"`
+	Role            string     `json:"role,omitempty"`
 	ParentTitle     string     `json:"parent_title,omitempty"`
-	AutomationID  string     `json:"automation_id,omitempty"`
-	PendingReview bool       `json:"pending_review,omitempty"`
-	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+	AutomationID    string     `json:"automation_id,omitempty"`
+	PendingReview   bool       `json:"pending_review,omitempty"`
+	CompletedAt     *time.Time `json:"completed_at,omitempty"`
 
 	Program   string          `json:"program"`
 	Worktree  GitWorktreeData `json:"worktree"`

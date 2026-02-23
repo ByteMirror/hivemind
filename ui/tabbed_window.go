@@ -26,7 +26,7 @@ var (
 			Border(activeTabBorder, true).
 			AlignHorizontal(lipgloss.Center)
 	windowBorder = lipgloss.RoundedBorder()
-	windowStyle = lipgloss.NewStyle().
+	windowStyle  = lipgloss.NewStyle().
 			BorderForeground(highlightColor).
 			Border(windowBorder, false, true, true, true).
 			Padding(0, 1, 0, 1)
@@ -53,13 +53,13 @@ type TabbedWindow struct {
 	height    int
 	width     int
 
-	preview    *PreviewPane
-	terminal   *TerminalPane
-	diff       *DiffPane
-	git        *GitPane
-	instance   *session.Instance
-	focusMode    bool   // true when user is typing directly into the agent pane
-	contentStale bool   // true when navigation changed instance but content not yet fetched
+	preview         *PreviewPane
+	terminal        *TerminalPane
+	diff            *DiffPane
+	git             *GitPane
+	instance        *session.Instance
+	focusMode       bool   // true when user is typing directly into the agent pane
+	contentStale    bool   // true when navigation changed instance but content not yet fetched
 	gitContent      string // cached git pane content, set by tick when changed
 	terminalContent string // cached terminal pane content, set by tick when changed
 }

@@ -11,14 +11,14 @@ const (
 	MethodPing         = "ping"
 
 	// Tier 3 methods — relayed to the TUI via action channel.
-	MethodCreateInstance  = "create_instance"
-	MethodInjectMessage   = "inject_message"
-	MethodPauseInstance   = "pause_instance"
-	MethodResumeInstance  = "resume_instance"
-	MethodKillInstance    = "kill_instance"
-	MethodDefineWorkflow  = "define_workflow"
-	MethodCompleteTask    = "complete_task"
-	MethodGetWorkflow     = "get_workflow"
+	MethodCreateInstance = "create_instance"
+	MethodInjectMessage  = "inject_message"
+	MethodPauseInstance  = "pause_instance"
+	MethodResumeInstance = "resume_instance"
+	MethodKillInstance   = "kill_instance"
+	MethodDefineWorkflow = "define_workflow"
+	MethodCompleteTask   = "complete_task"
+	MethodGetWorkflow    = "get_workflow"
 
 	// Event subscription methods.
 	MethodSubscribe   = "subscribe"
@@ -130,10 +130,10 @@ type InjectMessageParams struct {
 type TaskStatus string
 
 const (
-	TaskPending  TaskStatus = "pending"
-	TaskRunning  TaskStatus = "running"
-	TaskDone     TaskStatus = "done"
-	TaskFailed   TaskStatus = "failed"
+	TaskPending TaskStatus = "pending"
+	TaskRunning TaskStatus = "running"
+	TaskDone    TaskStatus = "done"
+	TaskFailed  TaskStatus = "failed"
 )
 
 // WorkflowTask represents a single task in a workflow DAG.
@@ -156,9 +156,9 @@ type Workflow struct {
 
 // WorkflowResult is returned by workflow operations.
 type WorkflowResult struct {
-	WorkflowID   string   `json:"workflow_id"`
-	Triggered    []string `json:"triggered,omitempty"`
-	Error        string   `json:"error,omitempty"`
+	WorkflowID string   `json:"workflow_id"`
+	Triggered  []string `json:"triggered,omitempty"`
+	Error      string   `json:"error,omitempty"`
 }
 
 // --- Event subscription types ---
