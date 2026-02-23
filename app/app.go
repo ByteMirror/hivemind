@@ -10,6 +10,7 @@ import (
 	"github.com/ByteMirror/hivemind/brain"
 	"github.com/ByteMirror/hivemind/config"
 	"github.com/ByteMirror/hivemind/log"
+	"github.com/ByteMirror/hivemind/memory"
 	"github.com/ByteMirror/hivemind/session"
 	"github.com/ByteMirror/hivemind/ui"
 	"github.com/ByteMirror/hivemind/ui/overlay"
@@ -194,6 +195,22 @@ type home struct {
 func newHome(ctx context.Context, program string, autoYes bool) *home {
 	// Load application config
 	appConfig := config.LoadConfig()
+
+	// Initialize IDE memory manager for agent startup injection.
+	if memMgr, err := memory.NewManagerFromConfig(appConfig); err != nil {
+		log.WarningLog.Printf("memory init: %v", err)
+	} else if memMgr != nil {
+		injectCount := 5
+		if appConfig.Memory != nil && appConfig.Memory.StartupInjectCount > 0 {
+			injectCount = appConfig.Memory.StartupInjectCount
+		}
+		session.SetMemoryManager(memMgr, injectCount)
+		if stop, err := memMgr.StartWatcher(); err != nil {
+			log.WarningLog.Printf("memory watcher: %v", err)
+		} else {
+			_ = stop // stopped when process exits
+		}
+	}
 
 	// Load application state
 	appState := config.LoadState()

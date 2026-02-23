@@ -94,6 +94,17 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 			}()
 		}
 
+		// Inject IDE memory context into CLAUDE.md before starting the agent.
+		if memMgr := getMemoryManager(); memMgr != nil {
+			wtPath := i.gitWorktree.GetWorktreePath()
+			count := getMemoryInjectCount()
+			go func() {
+				if err := injectMemoryContext(wtPath, memMgr, count); err != nil {
+					log.WarningLog.Printf("memory inject: %v", err)
+				}
+			}()
+		}
+
 		i.setLoadingProgress(4, "Starting tmux session...")
 		// Create new session
 		if err := i.tmuxSession.Start(i.gitWorktree.GetWorktreePath()); err != nil {
@@ -154,6 +165,17 @@ func (i *Instance) StartInSharedWorktree(worktree *git.GitWorktree, branch strin
 		go func() {
 			if err := registerMCPServer(wtPath, repoPath, title); err != nil {
 				log.WarningLog.Printf("failed to write MCP config: %v", err)
+			}
+		}()
+	}
+
+	// Inject IDE memory context into CLAUDE.md before starting the agent.
+	if memMgr := getMemoryManager(); memMgr != nil {
+		wtPath := worktree.GetWorktreePath()
+		count := getMemoryInjectCount()
+		go func() {
+			if err := injectMemoryContext(wtPath, memMgr, count); err != nil {
+				log.WarningLog.Printf("memory inject: %v", err)
 			}
 		}()
 	}
@@ -300,6 +322,17 @@ func (i *Instance) Resume() error {
 		}()
 	}
 
+	// Inject IDE memory context into CLAUDE.md before resuming the agent.
+	if memMgr := getMemoryManager(); memMgr != nil {
+		wtPath := i.gitWorktree.GetWorktreePath()
+		count := getMemoryInjectCount()
+		go func() {
+			if err := injectMemoryContext(wtPath, memMgr, count); err != nil {
+				log.WarningLog.Printf("memory inject: %v", err)
+			}
+		}()
+	}
+
 	i.setLoadingProgress(3, "Restoring session...")
 
 	// Check if tmux session still exists from pause, otherwise create new one
@@ -368,6 +401,16 @@ func (i *Instance) Restart() error {
 		go func() {
 			if err := registerMCPServer(worktreePath, repoPath, title); err != nil {
 				log.WarningLog.Printf("failed to write MCP config: %v", err)
+			}
+		}()
+	}
+
+	// Inject IDE memory context into CLAUDE.md before restarting the agent.
+	if memMgr := getMemoryManager(); memMgr != nil {
+		count := getMemoryInjectCount()
+		go func() {
+			if err := injectMemoryContext(worktreePath, memMgr, count); err != nil {
+				log.WarningLog.Printf("memory inject: %v", err)
 			}
 		}()
 	}
