@@ -2,7 +2,11 @@ package app
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
+	"github.com/ByteMirror/hivemind/config"
 	"github.com/ByteMirror/hivemind/session"
 	"github.com/ByteMirror/hivemind/ui"
 	"github.com/ByteMirror/hivemind/ui/overlay"
@@ -334,5 +338,53 @@ func (m *home) openContextMenu() (tea.Model, tea.Cmd) {
 	y := 1 + 4 + m.list.GetSelectedIdx()*4 // PaddingTop(1) + header rows + item offset
 	m.contextMenu = overlay.NewContextMenu(x, y, items)
 	m.state = stateContextMenu
+	return m, nil
+}
+
+// buildSkillPrompt constructs the prompt string from a skill's instructions and context files.
+// Instructions are prepended; context files are appended as tagged blocks.
+func buildSkillPrompt(skill *config.Skill) string {
+	if skill == nil {
+		return ""
+	}
+	var parts []string
+
+	if skill.Instructions != "" {
+		parts = append(parts, strings.TrimSpace(skill.Instructions))
+	}
+
+	for _, f := range skill.ContextFiles {
+		expanded := expandTilde(f)
+		data, err := os.ReadFile(expanded)
+		if err == nil && len(data) > 0 {
+			parts = append(parts, fmt.Sprintf("<context file=%q>\n%s\n</context>", f, strings.TrimSpace(string(data))))
+		}
+	}
+
+	return strings.Join(parts, "\n\n")
+}
+
+// expandTilde expands a leading "~/" to the user's home directory.
+func expandTilde(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return path
+		}
+		return filepath.Join(home, path[2:])
+	}
+	return path
+}
+
+// clearReviewState marks an instance as no longer pending review.
+func clearReviewState(instance *session.Instance) {
+	instance.PendingReview = false
+	instance.CompletedAt = nil
+}
+
+// discardReviewInstance clears the review state of a PendingReview instance.
+// The instance remains in the list but is no longer in the Review Queue.
+func (m *home) discardReviewInstance(instance *session.Instance) (tea.Model, tea.Cmd) {
+	clearReviewState(instance)
 	return m, nil
 }

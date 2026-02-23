@@ -76,6 +76,12 @@ const (
 	stateCommandPalette
 	// stateSettings is the state when the settings overlay is open.
 	stateSettings
+	// stateSkillPicker is when the user is choosing a skill for a new instance.
+	stateSkillPicker
+	// stateInlineComment is when the user is typing a comment for a diff line.
+	stateInlineComment
+	// stateReviewSendBack is when the user is typing feedback to send back to a review-queue agent.
+	stateReviewSendBack
 )
 
 type home struct {
@@ -154,6 +160,11 @@ type home struct {
 	pendingPRTitle string
 	// pendingPRToastID stores the toast ID for the in-progress PR creation
 	pendingPRToastID string
+
+	// cachedSkills holds skills loaded when entering stateNew (avoids repeated disk reads).
+	cachedSkills []config.Skill
+	// pendingSkill is the skill selected in the skill picker during instance creation.
+	pendingSkill *config.Skill
 
 	// contextMenu is the right-click context menu overlay
 	contextMenu *overlay.ContextMenu
@@ -640,6 +651,8 @@ func (m *home) View() string {
 	switch {
 	case m.state == stateSendPrompt && m.textInputOverlay != nil:
 		result = overlay.PlaceOverlay(0, 0, m.textInputOverlay.Render(), mainView, true, true)
+	case m.state == stateInlineComment && m.textInputOverlay != nil:
+		result = overlay.PlaceOverlay(0, 0, m.textInputOverlay.Render(), mainView, true, true)
 	case m.state == statePRTitle && m.textInputOverlay != nil:
 		result = overlay.PlaceOverlay(0, 0, m.textInputOverlay.Render(), mainView, true, true)
 	case m.state == statePRBody && m.textInputOverlay != nil:
@@ -681,6 +694,8 @@ func (m *home) View() string {
 		result = overlay.PlaceOverlay(0, 0, m.commandPalette.Render(), mainView, true, true)
 	case m.state == stateSettings && m.settingsOverlay != nil:
 		result = overlay.PlaceOverlay(0, 0, m.settingsOverlay.Render(), mainView, true, true)
+	case m.state == stateSkillPicker && m.pickerOverlay != nil:
+		result = overlay.PlaceOverlay(0, 0, m.pickerOverlay.Render(), mainView, true, true)
 	case m.state == stateContextMenu && m.contextMenu != nil:
 		cx, cy := m.contextMenu.GetPosition()
 		result = overlay.PlaceOverlay(cx, cy, m.contextMenu.Render(), mainView, true, false)
