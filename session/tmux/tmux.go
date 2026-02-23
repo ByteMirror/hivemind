@@ -34,6 +34,10 @@ type TmuxSession struct {
 	cmdExec cmd.Executor
 	// skipPermissions appends --dangerously-skip-permissions to Claude commands
 	skipPermissions bool
+	// AppendArgs holds additional arguments appended to the program's argument list
+	// during Start(). Each element is a separate arg — no shell splitting is done.
+	// Set this before calling Start().
+	AppendArgs []string
 	// ProgressFunc is called with (stage, description) during Start() to report progress.
 	ProgressFunc func(stage int, desc string)
 
@@ -138,6 +142,9 @@ func (t *TmuxSession) Start(workDir string) error {
 	programParts := strings.Fields(t.program)
 	if t.skipPermissions && isClaudeProgram(t.program) {
 		programParts = append(programParts, "--dangerously-skip-permissions")
+	}
+	if len(t.AppendArgs) > 0 {
+		programParts = append(programParts, t.AppendArgs...)
 	}
 
 	t.reportProgress(1, "Creating tmux session...")

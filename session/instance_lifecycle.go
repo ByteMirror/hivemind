@@ -20,6 +20,10 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 		return ErrTitleEmpty
 	}
 
+	if i.IsChat {
+		return i.startChatAgent()
+	}
+
 	if firstTimeSetup {
 		i.LoadingTotal = 8
 	} else {
@@ -438,6 +442,57 @@ func (i *Instance) Restart() error {
 
 	i.tmuxDead.Store(false)
 	i.setLoadingProgress(4, "Ready")
+	i.SetStatus(Running)
+	return nil
+}
+
+// startChatAgent starts a chat agent instance, bypassing git worktree creation.
+// It builds a system prompt from the personality directory and starts Claude
+// in that directory with --append-system-prompt.
+func (i *Instance) startChatAgent() error {
+	slug := i.Title
+	state, err := ReadWorkspaceState(slug)
+	if err != nil {
+		// If state file doesn't exist yet, default to unbootstrapped.
+		state = ChatWorkspaceState{Bootstrapped: false}
+	}
+
+	systemPrompt, err := BuildSystemPrompt(i.PersonalityDir, state, nil, 0)
+	if err != nil {
+		return fmt.Errorf("building system prompt: %w", err)
+	}
+
+	i.LoadingTotal = 4
+	i.setLoadingProgress(1, "Preparing chat session...")
+
+	var tmuxSession *tmux.TmuxSession
+	if i.tmuxSession != nil {
+		tmuxSession = i.tmuxSession
+	} else {
+		tmuxSession = tmux.NewTmuxSession(i.Title, i.Program, i.SkipPermissions)
+	}
+	tmuxSession.ProgressFunc = func(stage int, desc string) {
+		i.setLoadingProgress(1+stage, desc)
+	}
+
+	// Append --append-system-prompt and the prompt value as separate args.
+	// This avoids any shell injection: the prompt is never interpolated into
+	// a command string, it is passed directly as an exec argument.
+	if systemPrompt != "" {
+		tmuxSession.AppendArgs = []string{"--append-system-prompt", systemPrompt}
+	}
+
+	i.tmuxSession = tmuxSession
+
+	i.setLoadingProgress(2, "Starting chat session...")
+	if err := i.tmuxSession.Start(i.PersonalityDir); err != nil {
+		if cleanupErr := i.tmuxSession.Close(); cleanupErr != nil {
+			err = fmt.Errorf("%v (cleanup error: %v)", err, cleanupErr)
+		}
+		return fmt.Errorf("failed to start chat session: %w", err)
+	}
+
+	i.started.Store(true)
 	i.SetStatus(Running)
 	return nil
 }
