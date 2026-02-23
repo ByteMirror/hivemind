@@ -288,6 +288,11 @@ func (i *Instance) SetStatus(status Status) {
 	if i.Status == Running && status == Ready {
 		i.Notified = true
 		SendNotification("Hivemind", fmt.Sprintf("'%s' has finished", i.Title))
+		if i.AutomationID != "" {
+			now := time.Now()
+			i.PendingReview = true
+			i.CompletedAt = &now
+		}
 	}
 	if status == Running || status == Loading {
 		i.LastActiveAt = time.Now()
