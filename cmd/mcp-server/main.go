@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 
 	"github.com/ByteMirror/hivemind/brain"
+	"github.com/ByteMirror/hivemind/config"
 	hivemindmcp "github.com/ByteMirror/hivemind/mcp"
+	"github.com/ByteMirror/hivemind/memory"
 )
 
 func main() {
@@ -52,9 +54,25 @@ func main() {
 		brainClient = hivemindmcp.NewFileBrainClient(hivemindDir)
 	}
 
+	// Initialize memory manager from config (nil if memory is disabled).
+	cfg := config.LoadConfig()
+	var memMgr *memory.Manager
+	memMgr, err := memory.NewManagerFromConfig(cfg)
+	if err != nil {
+		hivemindmcp.Log("memory init failed: %v", err)
+		memMgr = nil
+	} else if memMgr != nil {
+		stop, stopErr := memMgr.StartWatcher()
+		if stopErr != nil {
+			hivemindmcp.Log("memory watcher failed: %v", stopErr)
+		} else {
+			defer stop()
+		}
+	}
+
 	hivemindmcp.Log("starting: hivemindDir=%s instanceID=%s repoPath=%s tier=%d", hivemindDir, instanceID, repoPath, tier)
 
-	srv := hivemindmcp.NewHivemindMCPServer(brainClient, hivemindDir, instanceID, repoPath, tier)
+	srv := hivemindmcp.NewHivemindMCPServer(brainClient, hivemindDir, instanceID, repoPath, tier, memMgr)
 	if err := srv.Serve(); err != nil {
 		hivemindmcp.Log("fatal: %v", err)
 		fmt.Fprintf(os.Stderr, "hivemind-mcp: %v\n", err)
