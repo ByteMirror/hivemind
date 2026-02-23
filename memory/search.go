@@ -14,42 +14,64 @@ type scoredResult struct {
 	bm25Score   float32
 }
 
-// Search performs hybrid search: FTS5 BM25 + optional cosine similarity.
+// Search performs hybrid search: FTS5 BM25 + optional cosine similarity,
+// followed by optional Claude-based re-ranking.
 func (m *Manager) Search(query string, opts SearchOpts) ([]SearchResult, error) {
 	if opts.MaxResults <= 0 {
 		opts.MaxResults = 10
 	}
 
+	// Fetch extra candidates when a reranker is configured so it has
+	// enough material to work with before trimming to MaxResults.
+	fetchLimit := opts.MaxResults * 2
+	if m.reranker != nil && fetchLimit < 20 {
+		fetchLimit = 20
+	}
+
 	m.mu.RLock()
-	defer m.mu.RUnlock()
 
 	// 1. BM25 keyword search via FTS5
-	bm25Results, err := m.bm25Search(query, opts.MaxResults*2)
+	bm25Results, err := m.bm25Search(query, fetchLimit)
 	if err != nil {
+		m.mu.RUnlock()
 		return nil, err
 	}
 
 	// 2. Vector search (if embeddings are configured)
 	var vecResults []scoredResult
 	if m.provider.Dims() > 0 {
-		vecResults, err = m.vectorSearch(query, opts.MaxResults*2)
+		vecResults, err = m.vectorSearch(query, fetchLimit)
 		if err != nil {
 			// Non-fatal: fall back to keyword-only
 			vecResults = nil
 		}
 	}
 
-	// 3. Merge results
-	merged := mergeResults(bm25Results, vecResults, opts.MaxResults)
-
-	// 4. Apply temporal decay
+	// 3. Merge and apply temporal decay under the read lock.
+	merged := mergeResults(bm25Results, vecResults, fetchLimit)
 	merged = applyTemporalDecay(merged, m)
 
-	// 5. Apply min score filter and return
+	m.mu.RUnlock() // release before any external call
+
+	// 4. Convert to []SearchResult for reranker.
+	candidates := make([]SearchResult, len(merged))
+	for i, r := range merged {
+		candidates[i] = r.SearchResult
+	}
+
+	// 5. Apply Claude reranker if configured (external subprocess call).
+	if m.reranker != nil {
+		candidates, _ = m.reranker.Rerank(query, candidates) // graceful fallback on error
+	}
+
+	// 6. Trim to MaxResults and apply min score filter.
 	var out []SearchResult
-	for _, r := range merged {
+	for _, r := range candidates {
 		if r.Score >= opts.MinScore {
-			out = append(out, r.SearchResult)
+			out = append(out, r)
+			if len(out) >= opts.MaxResults {
+				break
+			}
 		}
 	}
 	return out, nil

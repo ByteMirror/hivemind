@@ -18,6 +18,7 @@ type Manager struct {
 	dir      string           // ~/.hivemind/memory/
 	db       *sql.DB
 	provider EmbeddingProvider // nil == FTS-only
+	reranker Reranker          // optional; nil == no reranking
 	mu       sync.RWMutex
 }
 
@@ -41,6 +42,12 @@ func NewManager(dir string, provider EmbeddingProvider) (*Manager, error) {
 // Close releases resources held by the Manager.
 func (m *Manager) Close() {
 	m.db.Close()
+}
+
+// SetReranker configures an optional post-FTS5 reranker.
+// Safe to call before the Manager is used for searches.
+func (m *Manager) SetReranker(r Reranker) {
+	m.reranker = r
 }
 
 // Write appends content to a named memory file and triggers re-indexing.

@@ -34,5 +34,20 @@ func NewManagerFromConfig(cfg *config.Config) (*Manager, error) {
 		provider = &noopProvider{} // FTS-only
 	}
 
-	return NewManager(memDir, provider)
+	mgr, err := NewManager(memDir, provider)
+	if err != nil {
+		return nil, err
+	}
+
+	// "claude" provider: use the local claude CLI for re-ranking.
+	// Works with API key and Max subscription — auth is handled by claude itself.
+	if cfg.Memory.EmbeddingProvider == "claude" {
+		reranker, rerankErr := NewClaudeReranker(cfg.Memory.ClaudeModel)
+		if rerankErr == nil {
+			mgr.SetReranker(reranker)
+		}
+		// If claude binary not found, silently fall back to FTS-only.
+	}
+
+	return mgr, nil
 }

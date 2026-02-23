@@ -29,3 +29,11 @@ type EmbeddingProvider interface {
 	Dims() int
 	Name() string
 }
+
+// Reranker re-orders search results by semantic relevance to a query.
+// It is applied as a post-processing step after FTS5 keyword retrieval,
+// without requiring any embedding storage.
+type Reranker interface {
+	Rerank(query string, results []SearchResult) ([]SearchResult, error)
+	Name() string
+}

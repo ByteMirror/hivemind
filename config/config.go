@@ -42,6 +42,9 @@ type MemoryConfig struct {
 	OllamaURL string `json:"ollama_url,omitempty"`
 	// OllamaModel is the Ollama model name. Default "nomic-embed-text".
 	OllamaModel string `json:"ollama_model,omitempty"`
+	// ClaudeModel is the model used for re-ranking with the "claude" provider.
+	// Defaults to "claude-haiku-4-5-20251001" — works with both API key and Max subscription.
+	ClaudeModel string `json:"claude_model,omitempty"`
 	// StartupInjectCount controls how many memory snippets are injected into
 	// CLAUDE.md when starting an agent. Default 5.
 	StartupInjectCount int `json:"startup_inject_count,omitempty"`
