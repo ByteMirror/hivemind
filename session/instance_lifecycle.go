@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"time"
 
 	"github.com/ByteMirror/hivemind/log"
@@ -94,7 +95,20 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 			}()
 		}
 
-		i.setLoadingProgress(4, "Starting tmux session...")
+		// Run the optional setup script in the worktree directory before starting the agent.
+		if i.SetupScript != "" {
+			i.setLoadingProgress(4, "Running setup script...")
+			cmd := exec.Command("sh", "-c", i.SetupScript)
+			cmd.Dir = i.gitWorktree.GetWorktreePath()
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				log.WarningLog.Printf("setup script failed for %s: %v\n%s", i.Title, err, out)
+			} else {
+				log.InfoLog.Printf("setup script for %s: %s", i.Title, string(out))
+			}
+		}
+
+		i.setLoadingProgress(5, "Starting tmux session...")
 		// Create new session
 		if err := i.tmuxSession.Start(i.gitWorktree.GetWorktreePath()); err != nil {
 			// Cleanup git worktree if tmux session creation fails
