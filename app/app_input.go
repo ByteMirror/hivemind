@@ -1641,13 +1641,10 @@ func (m *home) handleDefaultKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case keys.KeyMemoryBrowser:
 		return m.openMemoryBrowser()
+	case keys.KeyAutomations:
+		m.state = stateAutomations
+		return m, nil
 	default:
-		// Check raw key string for features without a named key binding.
-		switch msg.String() {
-		case "A":
-			m.state = stateAutomations
-			return m, nil
-		}
 		return m, nil
 	}
 }
