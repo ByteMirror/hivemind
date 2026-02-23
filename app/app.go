@@ -741,11 +741,15 @@ func (m *home) View() string {
 	case m.state == stateSkillPicker && m.pickerOverlay != nil:
 		result = overlay.PlaceOverlay(0, 0, m.pickerOverlay.Render(), mainView, true, true)
 	case m.state == stateAutomations || m.state == stateNewAutomation:
-		mainView = ui.RenderAutomationsList(m.automations, m.autoSelectedIdx, m.width)
-		if m.textInputOverlay != nil {
-			mainView = overlay.PlaceOverlay(0, 0, m.textInputOverlay.Render(), mainView, true, true)
+		modalWidth := m.width - 4
+		if modalWidth > 76 {
+			modalWidth = 76
 		}
-		result = mainView
+		autoView := ui.RenderAutomationsList(m.automations, m.autoSelectedIdx, modalWidth)
+		if m.textInputOverlay != nil {
+			autoView = overlay.PlaceOverlay(0, 0, m.textInputOverlay.Render(), autoView, true, true)
+		}
+		result = overlay.PlaceOverlay(0, 0, autoView, mainView, true, true)
 	case m.state == stateMemoryBrowser && m.memoryBrowser != nil:
 		result = m.memoryBrowser.Render()
 	case m.state == stateContextMenu && m.contextMenu != nil:
