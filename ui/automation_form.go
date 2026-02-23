@@ -174,9 +174,9 @@ func (f *AutomationForm) Render(width, height int) string {
 	sb.WriteString(formHintStyle.Render("  hourly · daily · weekly · every 4h · every 30m · @06:00") + "\n")
 	sb.WriteString(f.wrapField(f.scheduleInput.View(), f.focusedField == 1, fieldW) + "\n\n")
 
-	// Instructions field
+	// Instructions field (no trailing blank — footer follows immediately)
 	sb.WriteString(f.fieldLabel("Instructions", f.focusedField == 2) + "\n")
-	sb.WriteString(f.wrapField(f.instrArea.View(), f.focusedField == 2, fieldW) + "\n\n")
+	sb.WriteString(f.wrapField(f.instrArea.View(), f.focusedField == 2, fieldW) + "\n")
 
 	sb.WriteString(autoHintStyle.Render("tab next field  shift+tab prev  ctrl+s save  esc cancel"))
 

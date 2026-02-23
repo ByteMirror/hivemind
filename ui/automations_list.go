@@ -60,6 +60,13 @@ func RenderAutomationsList(automations []*config.Automation, selectedIdx int, wi
 
 	if form != nil {
 		content := form.Render(innerWidth, innerHeight)
+		// Hard clamp: lipgloss Height() is a minimum, not a maximum.
+		// Truncate the content to innerHeight lines so it never overflows the border.
+		lines := strings.Split(content, "\n")
+		if len(lines) > innerHeight {
+			lines = lines[:innerHeight]
+			content = strings.Join(lines, "\n")
+		}
 		return autoBorderStyle.Width(innerWidth).Height(innerHeight).Render(content)
 	}
 
