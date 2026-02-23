@@ -285,6 +285,18 @@ func (i *Instance) Kill() error {
 		return nil // already being killed
 	}
 
+	// If memory is configured, send a final prompt asking the agent to persist
+	// session learnings before we terminate. This is fire-and-forget — if it
+	// fails, we log and continue with the kill.
+	if getMemoryManager() != nil {
+		if err := SendMemoryAutoWritePrompt(i); err != nil {
+			log.WarningLog.Printf("memory-autosave[%s]: failed to send auto-write prompt: %v", i.Title, err)
+		} else {
+			// Give the agent a moment to write before we terminate.
+			time.Sleep(memoryAutoWriteKillWait)
+		}
+	}
+
 	var errs []error
 
 	// Always try to cleanup both resources, even if one fails

@@ -80,7 +80,7 @@ func buildMemorySection(tree []memory.TreeEntry, systemFiles map[string]string, 
 	b.WriteString("- **Before answering** any question about the user's preferences, setup, past decisions, or active projects: call `memory_search` first.\n")
 	b.WriteString("- **After completing any significant task** (implementing a feature, fixing a bug, making an architectural decision): call `memory_write` immediately. Do not wait to be asked.\n")
 	b.WriteString("- **At the end of every working session**: call `memory_write` to record what was built, decisions made, and any user preferences observed. This is mandatory.\n")
-	b.WriteString("- Write **stable facts** (hardware, OS, global preferences) to `global.md` using `scope=\"global\"`. Write **project decisions** with `scope=\"repo\"` (default for dated files).\n")
+	b.WriteString("- Write **stable facts** (hardware, OS, global preferences) with `scope=\"global\"` — this writes to `system/global.md` which is always in agent context. Write **project decisions** with `scope=\"repo\"` (dated files default to repo).\n")
 	b.WriteString("- **When asked to write memory**: Do it immediately without asking for confirmation. Call memory_write with a concise summary of: (1) what was built/changed, (2) key decisions made, (3) any user preferences expressed.\n\n")
 
 	b.WriteString("### What is worth writing to memory\n\n")
