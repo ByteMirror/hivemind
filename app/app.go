@@ -195,9 +195,8 @@ type home struct {
 	// Automations
 	automations     []*config.Automation
 	autoSelectedIdx int
-	autoForm    *ui.AutomationForm
-	autoEditIdx int // -1 = new, >=0 = index of automation being edited
-
+	autoForm        *ui.AutomationForm
+	autoEditIdx     int // -1 = new, >=0 = index of automation being edited
 
 	// embeddedTerminal is the VT emulator for focus mode (nil when not in focus mode)
 	embeddedTerminal *session.EmbeddedTerminal

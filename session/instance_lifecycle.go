@@ -202,6 +202,7 @@ func (i *Instance) StartInSharedWorktree(worktree *git.GitWorktree, branch strin
 	i.SetStatus(Running)
 	return nil
 }
+
 // StartInMainRepo starts the instance directly in the repository directory.
 // Unlike Start(), this does NOT create a git worktree or a new branch.
 func (i *Instance) StartInMainRepo() error {
