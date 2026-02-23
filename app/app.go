@@ -91,6 +91,14 @@ const (
 	stateMemoryBrowser
 )
 
+// sidebarTab identifies which tab is active in the sidebar.
+type sidebarTab int
+
+const (
+	sidebarTabCode sidebarTab = iota
+	sidebarTabChat
+)
+
 type home struct {
 	ctx context.Context
 
@@ -159,6 +167,8 @@ type home struct {
 	allTopics []*session.Topic
 	// focusedPanel tracks which panel has keyboard focus (0=sidebar, 1=instance list)
 	focusedPanel int
+	// sidebarTab tracks which tab is active in the sidebar (Code or Chat)
+	sidebarTab sidebarTab
 	// pendingTopicName stores the topic name during the two-step creation flow
 	pendingTopicName string
 	// pendingTopicRepoPath stores the repo path during multi-repo topic creation

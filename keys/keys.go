@@ -62,6 +62,9 @@ const (
 	KeyCommandPalette // Key for opening command palette
 	KeyMemoryBrowser  // Key for opening the memory file browser
 
+	KeySidebarCodeTab // Key for switching sidebar to Code tab
+	KeySidebarChatTab // Key for switching sidebar to Chat tab
+
 	// Diff keybindings
 	KeyShiftUp
 	KeyShiftDown
@@ -111,6 +114,8 @@ var GlobalKeyStringsMap = map[string]KeyName{
 	"y":           KeyAutoYes,
 	"ctrl+p":      KeyCommandPalette,
 	"M":           KeyMemoryBrowser,
+	"[":           KeySidebarCodeTab,
+	"]":           KeySidebarChatTab,
 }
 
 // GlobalkeyBindings is a global, immutable map of KeyName tot keybinding.
@@ -262,6 +267,14 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	KeyMemoryBrowser: key.NewBinding(
 		key.WithKeys("M"),
 		key.WithHelp("M", "memory"),
+	),
+	KeySidebarCodeTab: key.NewBinding(
+		key.WithKeys("["),
+		key.WithHelp("[", "Code tab"),
+	),
+	KeySidebarChatTab: key.NewBinding(
+		key.WithKeys("]"),
+		key.WithHelp("]", "Chat tab"),
 	),
 
 	// -- Special keybindings --
