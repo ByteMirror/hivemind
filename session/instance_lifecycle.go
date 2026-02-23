@@ -202,6 +202,60 @@ func (i *Instance) StartInSharedWorktree(worktree *git.GitWorktree, branch strin
 	i.SetStatus(Running)
 	return nil
 }
+// StartInMainRepo starts the instance directly in the repository directory.
+// Unlike Start(), this does NOT create a git worktree or a new branch.
+func (i *Instance) StartInMainRepo() error {
+	if i.Title == "" {
+		return ErrTitleEmpty
+	}
+
+	i.LoadingTotal = 5
+	i.LoadingMessage = "Initializing..."
+	i.setLoadingProgress(1, "Preparing session...")
+
+	i.mainRepo = true
+
+	var tmuxSession *tmux.TmuxSession
+	if i.tmuxSession != nil {
+		tmuxSession = i.tmuxSession
+	} else {
+		tmuxSession = tmux.NewTmuxSession(i.Title, i.Program, i.SkipPermissions)
+	}
+	tmuxSession.ProgressFunc = func(stage int, desc string) {
+		i.setLoadingProgress(1+stage, desc)
+	}
+	i.tmuxSession = tmuxSession
+
+	if isClaudeProgram(i.Program) {
+		repoPath := i.Path
+		title := i.Title
+		go func() {
+			if err := registerMCPServer(repoPath, repoPath, title); err != nil {
+				log.WarningLog.Printf("failed to write MCP config: %v", err)
+			}
+		}()
+	}
+
+	var setupErr error
+	defer func() {
+		if setupErr != nil {
+			if cleanupErr := i.Kill(); cleanupErr != nil {
+				setupErr = fmt.Errorf("%v (cleanup error: %v)", setupErr, cleanupErr)
+			}
+		} else {
+			i.started.Store(true)
+		}
+	}()
+
+	i.setLoadingProgress(3, "Starting tmux session...")
+	if err := i.tmuxSession.Start(i.Path); err != nil {
+		setupErr = fmt.Errorf("failed to start session in main repo: %w", err)
+		return setupErr
+	}
+
+	i.SetStatus(Running)
+	return nil
+}
 
 // Kill terminates the instance and cleans up all resources
 func (i *Instance) Kill() error {
@@ -241,7 +295,7 @@ func (i *Instance) Pause() error {
 
 	var errs []error
 
-	if !i.sharedWorktree {
+	if !i.sharedWorktree && !i.mainRepo {
 		// Check if there are any changes to commit
 		if dirty, err := i.gitWorktree.IsDirty(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to check if worktree is dirty: %w", err))
@@ -265,7 +319,7 @@ func (i *Instance) Pause() error {
 		// Continue with pause process even if detach fails
 	}
 
-	if !i.sharedWorktree {
+	if !i.sharedWorktree && !i.mainRepo {
 		// Check if worktree exists before trying to remove it
 		if _, err := os.Stat(i.gitWorktree.GetWorktreePath()); err == nil {
 			// Remove worktree but keep branch
@@ -290,7 +344,9 @@ func (i *Instance) Pause() error {
 	}
 
 	i.SetStatus(Paused)
-	_ = clipboard.WriteAll(i.gitWorktree.GetBranchName())
+	if i.gitWorktree != nil {
+		_ = clipboard.WriteAll(i.gitWorktree.GetBranchName())
+	}
 	return nil
 }
 
@@ -305,6 +361,26 @@ func (i *Instance) Resume() error {
 
 	// Reset the dead flag so the resumed session will be polled normally.
 	i.tmuxDead.Store(false)
+
+	// Main-repo instances have no worktree to set up; just restart the tmux session.
+	if i.mainRepo {
+		i.LoadingTotal = 2
+		i.setLoadingProgress(1, "Restoring session...")
+		if i.tmuxSession.DoesSessionExist() {
+			if err := i.tmuxSession.Restore(); err != nil {
+				if startErr := i.tmuxSession.Start(i.Path); startErr != nil {
+					return fmt.Errorf("failed to restart main-repo session: %w", startErr)
+				}
+			}
+		} else {
+			if err := i.tmuxSession.Start(i.Path); err != nil {
+				return fmt.Errorf("failed to restart main-repo session: %w", err)
+			}
+		}
+		i.setLoadingProgress(2, "Ready")
+		i.SetStatus(Running)
+		return nil
+	}
 
 	i.LoadingTotal = 4
 	i.setLoadingProgress(1, "Checking branch...")
