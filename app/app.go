@@ -732,7 +732,9 @@ func (m *home) View() string {
 			log.ErrorLog.Printf("text overlay is nil")
 		}
 		result = overlay.PlaceOverlay(0, 0, m.textOverlay.Render(), mainView, true, true)
-	case m.state == stateConfirm || m.state == stateNewTopicConfirm:
+	case m.state == stateNewTopicConfirm && m.pickerOverlay != nil:
+		result = overlay.PlaceOverlay(0, 0, m.pickerOverlay.Render(), mainView, true, true)
+	case m.state == stateConfirm:
 		if m.confirmationOverlay == nil {
 			log.ErrorLog.Printf("confirmation overlay is nil")
 		}
