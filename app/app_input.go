@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ByteMirror/hivemind/brain"
 	"github.com/ByteMirror/hivemind/config"
 	"github.com/ByteMirror/hivemind/keys"
 	"github.com/ByteMirror/hivemind/log"
@@ -23,7 +24,7 @@ func (m *home) handleMenuHighlighting(msg tea.KeyMsg) (cmd tea.Cmd, returnEarly 
 		m.keySent = false
 		return nil, false
 	}
-	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateNewTopic || m.state == stateNewTopicConfirm || m.state == stateSearch || m.state == stateMoveTo || m.state == stateContextMenu || m.state == statePRTitle || m.state == statePRBody || m.state == stateRenameInstance || m.state == stateRenameTopic || m.state == stateSendPrompt || m.state == stateFocusAgent || m.state == stateRepoSwitch || m.state == stateNewTopicRepo || m.state == stateCommandPalette || m.state == stateSettings || m.state == stateSkillPicker || m.state == stateInlineComment {
+	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateNewTopic || m.state == stateNewTopicConfirm || m.state == stateSearch || m.state == stateMoveTo || m.state == stateContextMenu || m.state == statePRTitle || m.state == statePRBody || m.state == stateRenameInstance || m.state == stateRenameTopic || m.state == stateSendPrompt || m.state == stateFocusAgent || m.state == stateRepoSwitch || m.state == stateNewTopicRepo || m.state == stateCommandPalette || m.state == stateSettings || m.state == stateSkillPicker || m.state == stateInlineComment || m.state == stateAutomations || m.state == stateNewAutomation {
 		return nil, false
 	}
 	// If it's in the global keymap, we should try to highlight it.
@@ -356,6 +357,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m.handleInlineCommentInputKeys(msg)
 	case stateReviewSendBack:
 		return m.handleReviewSendBackKeys(msg)
+	case stateAutomations:
+		return m.handleAutomationsKeys(msg)
+	case stateNewAutomation:
+		return m.handleNewAutomationKeys(msg)
 	default:
 		return m.handleDefaultKeys(msg)
 	}
@@ -1633,6 +1638,11 @@ func (m *home) handleDefaultKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.list.SetFilter("") // Show all instances
 		return m, nil
 	default:
+		// Check raw key string for features without a named key binding.
+		if msg.String() == "A" {
+			m.state = stateAutomations
+			return m, nil
+		}
 		return m, nil
 	}
 }
@@ -1945,4 +1955,167 @@ func (m *home) handleReviewSendBackKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.textInputOverlay.HandleKeyPress(msg)
 		return m, nil
 	}
+}
+
+// handleAutomationsKeys handles key events in the automations manager screen.
+func (m *home) handleAutomationsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q":
+		m.state = stateDefault
+		return m, nil
+
+	case "up", "k":
+		if m.autoSelectedIdx > 0 {
+			m.autoSelectedIdx--
+		}
+		return m, nil
+
+	case "down", "j":
+		if m.autoSelectedIdx < len(m.automations)-1 {
+			m.autoSelectedIdx++
+		}
+		return m, nil
+
+	case "n":
+		// Start creation flow: step 0 = name.
+		m.autoCreateStep = 0
+		m.textInputOverlay = overlay.NewTextInputOverlay("Automation name", "")
+		m.textInputOverlay.SetSize(60, 10)
+		m.state = stateNewAutomation
+		return m, nil
+
+	case "e":
+		// Toggle enabled/disabled on selected automation.
+		if len(m.automations) == 0 {
+			return m, nil
+		}
+		auto := m.automations[m.autoSelectedIdx]
+		auto.Enabled = !auto.Enabled
+		if err := config.SaveAutomations(m.automations); err != nil {
+			return m, m.handleError(err)
+		}
+		state := "enabled"
+		if !auto.Enabled {
+			state = "disabled"
+		}
+		m.toastManager.Info(fmt.Sprintf("Automation %q %s", auto.Name, state))
+		return m, m.toastTickCmd()
+
+	case "r":
+		// Run the selected automation immediately.
+		if len(m.automations) == 0 {
+			return m, nil
+		}
+		auto := m.automations[m.autoSelectedIdx]
+		if m.brainServer == nil {
+			return m, m.handleError(fmt.Errorf("brain server not available"))
+		}
+		skipPerms := true
+		params := brain.CreateInstanceParams{
+			Title:           fmt.Sprintf("%s-%d", auto.Name, time.Now().Unix()),
+			Prompt:          auto.Instructions,
+			SkipPermissions: &skipPerms,
+			AutomationID:    auto.ID,
+		}
+		if err := m.brainServer.CreateInstanceDirect(params); err != nil {
+			return m, m.handleError(fmt.Errorf("failed to run automation: %w", err))
+		}
+		m.toastManager.Info(fmt.Sprintf("Automation %q triggered", auto.Name))
+		return m, m.toastTickCmd()
+
+	case "d":
+		// Delete selected automation with confirmation.
+		if len(m.automations) == 0 {
+			return m, nil
+		}
+		auto := m.automations[m.autoSelectedIdx]
+		idx := m.autoSelectedIdx
+		deleteAction := func() tea.Msg {
+			m.automations = append(m.automations[:idx], m.automations[idx+1:]...)
+			if m.autoSelectedIdx >= len(m.automations) && m.autoSelectedIdx > 0 {
+				m.autoSelectedIdx--
+			}
+			config.SaveAutomations(m.automations)
+			return instanceChangedMsg{}
+		}
+		return m, m.confirmAction(fmt.Sprintf("[!] Delete automation %q?", auto.Name), deleteAction)
+	}
+
+	return m, nil
+}
+
+// handleNewAutomationKeys handles key events in the new-automation creation flow.
+// Steps: 0=name, 1=instructions, 2=schedule.
+func (m *home) handleNewAutomationKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.textInputOverlay == nil {
+		m.state = stateAutomations
+		return m, nil
+	}
+
+	done := m.textInputOverlay.HandleKeyPress(msg)
+	if m.textInputOverlay.Canceled {
+		m.textInputOverlay = nil
+		m.autoCreating = nil
+		m.state = stateAutomations
+		return m, nil
+	}
+	if !done {
+		return m, nil
+	}
+
+	value := m.textInputOverlay.GetValue()
+	m.textInputOverlay = nil
+
+	switch m.autoCreateStep {
+	case 0: // name captured
+		if value == "" {
+			m.toastManager.Error("Automation name cannot be empty")
+			// Retry
+			m.textInputOverlay = overlay.NewTextInputOverlay("Automation name", "")
+			m.textInputOverlay.SetSize(60, 10)
+			return m, m.toastTickCmd()
+		}
+		m.autoCreating = &config.Automation{Name: value}
+		m.autoCreateStep = 1
+		m.textInputOverlay = overlay.NewTextInputOverlay("Instructions (prompt for the agent)", "")
+		m.textInputOverlay.SetSize(60, 15)
+		return m, nil
+
+	case 1: // instructions captured
+		m.autoCreating.Instructions = value
+		m.autoCreateStep = 2
+		m.textInputOverlay = overlay.NewTextInputOverlay("Schedule (e.g. hourly, daily, every 4h, @06:00)", "")
+		m.textInputOverlay.SetSize(60, 10)
+		return m, nil
+
+	case 2: // schedule captured — validate
+		schedule := value
+		_, err := config.ParseSchedule(schedule)
+		if err != nil {
+			m.toastManager.Error("Invalid schedule: " + err.Error())
+			// Retry schedule step
+			m.textInputOverlay = overlay.NewTextInputOverlay("Schedule (e.g. hourly, daily, every 4h, @06:00)", schedule)
+			m.textInputOverlay.SetSize(60, 10)
+			return m, m.toastTickCmd()
+		}
+		auto, err := config.NewAutomation(m.autoCreating.Name, m.autoCreating.Instructions, schedule)
+		if err != nil {
+			m.toastManager.Error("Failed to create automation: " + err.Error())
+			m.state = stateAutomations
+			m.autoCreating = nil
+			return m, m.toastTickCmd()
+		}
+		m.automations = append(m.automations, auto)
+		m.autoSelectedIdx = len(m.automations) - 1
+		if err := config.SaveAutomations(m.automations); err != nil {
+			return m, m.handleError(err)
+		}
+		m.autoCreating = nil
+		m.state = stateAutomations
+		m.toastManager.Info(fmt.Sprintf("Automation %q created", auto.Name))
+		return m, m.toastTickCmd()
+	}
+
+	m.state = stateAutomations
+	return m, nil
 }

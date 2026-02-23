@@ -82,6 +82,10 @@ const (
 	stateInlineComment
 	// stateReviewSendBack is when the user is typing feedback to send back to a review-queue agent.
 	stateReviewSendBack
+	// stateAutomations is the state when the automations manager screen is open.
+	stateAutomations
+	// stateNewAutomation is the state when the user is creating a new automation (multi-step).
+	stateNewAutomation
 )
 
 type home struct {
@@ -180,6 +184,14 @@ type home struct {
 	listWidth     int // full allocation including gaps
 	columnGap     int // gap on each side of the instance list
 	contentHeight int
+	width         int // full terminal width
+
+	// Automations
+	automations    []*config.Automation
+	autoSelectedIdx int
+	autoCreating   *config.Automation
+	autoCreateStep int
+
 
 	// embeddedTerminal is the VT emulator for focus mode (nil when not in focus mode)
 	embeddedTerminal *session.EmbeddedTerminal
@@ -282,6 +294,14 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 		state.AddRecentRepo(primaryRepoPath)
 	}
 
+	// Load automations
+	automations, err := config.LoadAutomations()
+	if err != nil {
+		log.ErrorLog.Printf("Failed to load automations: %v", err)
+		automations = []*config.Automation{}
+	}
+	h.automations = automations
+
 	// Start brain IPC server for multi-agent coordination
 	configDir, err := config.GetConfigDir()
 	if err == nil {
@@ -347,6 +367,7 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	m.listWidth = listAlloc // full allocation including gaps
 	m.columnGap = columnGap
 	m.contentHeight = contentHeight
+	m.width = msg.Width
 
 	if m.textInputOverlay != nil {
 		m.textInputOverlay.SetSize(int(float32(msg.Width)*0.6), int(float32(msg.Height)*0.4))
@@ -696,6 +717,12 @@ func (m *home) View() string {
 		result = overlay.PlaceOverlay(0, 0, m.settingsOverlay.Render(), mainView, true, true)
 	case m.state == stateSkillPicker && m.pickerOverlay != nil:
 		result = overlay.PlaceOverlay(0, 0, m.pickerOverlay.Render(), mainView, true, true)
+	case m.state == stateAutomations || m.state == stateNewAutomation:
+		mainView = ui.RenderAutomationsList(m.automations, m.autoSelectedIdx, m.width)
+		if m.textInputOverlay != nil {
+			mainView = overlay.PlaceOverlay(0, 0, m.textInputOverlay.Render(), mainView, true, true)
+		}
+		result = mainView
 	case m.state == stateContextMenu && m.contextMenu != nil:
 		cx, cy := m.contextMenu.GetPosition()
 		result = overlay.PlaceOverlay(cx, cy, m.contextMenu.Render(), mainView, true, false)
