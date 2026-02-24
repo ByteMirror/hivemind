@@ -56,3 +56,49 @@ goimports -w .          # fix import ordering
 - Don't create subpackages prematurely — this is a CLI tool, not a library.
 - Don't commit `worktrees/` directory contents.
 - Don't use `os.WriteFile` directly for config/state — use `atomicWriteFile`.
+
+<!-- hivemind-memory-start -->
+## Hivemind Memory
+
+Hivemind maintains an IDE-wide persistent memory store across all sessions and projects.
+
+### Rules
+
+- **Before answering** any question about the user's preferences, setup, past decisions, or active projects: call `memory_search` first.
+- **After every session** where you learn something durable: call `memory_write` to persist it.
+- Write **stable facts** (hardware, OS, global preferences) to `global.md` using `scope="global"`. Write **project decisions** with `scope="repo"` (default for dated files).
+- **When asked to write memory at session end**: Do it immediately. Call memory_write with a concise summary of: (1) what was built/changed, (2) key decisions made, (3) any user preferences expressed.
+
+### What is worth writing to memory
+
+- User's OS, hardware, terminal and editor setup
+- API keys, services, and credentials configured
+- Project tech stack decisions and the reasoning behind them
+- Recurring patterns the user likes or dislikes
+- Anything you had to look up or figure out that the user will likely ask again
+
+### Tools
+
+| Tool | When to use |
+|------|-------------|
+| `memory_search(query)` | Start of session, before answering questions about prior context |
+| `memory_write(content, file?, scope?)` | scope="repo" for this project's decisions; scope="global" for user preferences/hardware |
+| `memory_get(path, from?, lines?)` | Read specific lines from a memory file |
+| `memory_list()` | Browse all memory files |
+
+### Global context
+
+**[global.md L3]** ## Hardware & OS
+- **Machine**: Apple M4 Pro, 24 GB RAM
+- **OS**: macOS 26.2 (Darwin 25.2.0, kernel arm64) — codename Tahoe
+- **Shell**: zsh
+- **Hostname**: DE08-M0079
+- **User**: fabian.urbanek
+
+**[global.md L1]** # Global Setup
+
+### Repo context (memory_1896e0b419b5aa60)
+
+*(no repo memory yet)*
+
+<!-- hivemind-memory-end -->

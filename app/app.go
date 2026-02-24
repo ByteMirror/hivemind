@@ -705,6 +705,10 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case onboardingStartedMsg:
 		if msg.err != nil {
 			log.WarningLog.Printf("onboarding: companion failed to start: %v", msg.err)
+			// Companion failed — fall back to the normal UI so the user is not stuck.
+			m.state = stateDefault
+			m.toastManager.Error("Companion failed to start: " + msg.err.Error())
+			return m, tea.Batch(tea.WindowSize(), m.toastTickCmd())
 		}
 		// Trigger a window size update so layout is recalculated for the companion view.
 		return m, tea.WindowSize()

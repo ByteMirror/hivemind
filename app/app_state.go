@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ByteMirror/hivemind/config"
+	"github.com/ByteMirror/hivemind/log"
 	"github.com/ByteMirror/hivemind/session"
 	"github.com/ByteMirror/hivemind/ui"
 
@@ -63,6 +64,12 @@ func accumulateInstanceStats(instances []*session.Instance) (countByTopic map[st
 }
 
 func (m *home) updateSidebarItemsSingleRepo() {
+	// Chat tab has no code topics — show only ungrouped chat agents.
+	if m.sidebarTab == sidebarTabChat {
+		_, _, topicStatuses := accumulateInstanceStats(m.list.GetInstances())
+		m.sidebar.SetItems(nil, nil, len(m.list.GetInstances()), nil, nil, topicStatuses)
+		return
+	}
 	topicNames, sharedTopics, autoYesTopics := topicMeta(m.topics)
 	countByTopic, ungroupedCount, topicStatuses := accumulateInstanceStats(m.list.GetInstances())
 	m.sidebar.SetItems(topicNames, countByTopic, ungroupedCount, sharedTopics, autoYesTopics, topicStatuses)
@@ -784,8 +791,14 @@ func (m *home) saveAllTopics() error {
 // instanceChanged updates the preview pane, menu, and diff pane based on the selected instance. It returns an error
 // Cmd if there was any error.
 func (m *home) instanceChanged() tea.Cmd {
+	log.ErrorLog.Printf("[DEBUG] instanceChanged: start")
 	// selected may be nil
 	selected := m.list.GetSelectedInstance()
+	if selected != nil {
+		log.ErrorLog.Printf("[DEBUG] instanceChanged: selected=%q isChat=%v status=%d started=%v", selected.Title, selected.IsChat, selected.Status, selected.Started())
+	} else {
+		log.ErrorLog.Printf("[DEBUG] instanceChanged: selected=nil")
+	}
 
 	// Clear notification when user selects this instance — they've seen it
 	if selected != nil && selected.Notified {
@@ -793,6 +806,7 @@ func (m *home) instanceChanged() tea.Cmd {
 		m.updateSidebarItems()
 	}
 
+	log.ErrorLog.Printf("[DEBUG] instanceChanged: calling SetInstance")
 	m.tabbedWindow.SetInstance(selected)
 	// Update chat mode: hide Diff/Git tabs for chat agents
 	if selected != nil {
@@ -804,8 +818,10 @@ func (m *home) instanceChanged() tea.Cmd {
 	// Invalidate any in-flight async preview fetch so stale content isn't applied
 	m.previewGeneration++
 	m.previewFetching = false
+	log.ErrorLog.Printf("[DEBUG] instanceChanged: calling menu.SetInstance")
 	// Update menu with current instance
 	m.menu.SetInstance(selected)
+	log.ErrorLog.Printf("[DEBUG] instanceChanged: menu.SetInstance done")
 
 	// Reattach lazygit if the selected instance changed while on the git tab
 	if m.tabbedWindow.IsInGitTab() {
@@ -831,6 +847,7 @@ func (m *home) instanceChanged() tea.Cmd {
 		}
 	}
 
+	log.ErrorLog.Printf("[DEBUG] instanceChanged: done")
 	return nil
 }
 

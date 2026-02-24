@@ -561,6 +561,13 @@ func (i *Instance) startChatAgent() error {
 
 	i.tmuxSession = tmuxSession
 
+	// Kill any stale session left over from a previous (unfinished) run.
+	// This prevents the "tmux session already exists" error when restarting.
+	if i.tmuxSession.DoesSessionExist() {
+		log.WarningLog.Printf("startChatAgent: stale session %q found, killing it", i.Title)
+		_ = i.tmuxSession.Close()
+	}
+
 	i.setLoadingProgress(2, "Starting chat session...")
 	if err := i.tmuxSession.Start(i.PersonalityDir); err != nil {
 		if cleanupErr := i.tmuxSession.Close(); cleanupErr != nil {
