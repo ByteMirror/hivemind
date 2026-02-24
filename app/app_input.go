@@ -174,7 +174,6 @@ func (m *home) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	// Determine which column was clicked
 	if x < m.sidebarWidth {
 		// Click in sidebar
-		log.ErrorLog.Printf("[DEBUG] SIDEBAR CLICK: x=%d contentY=%d", x, contentY)
 		m.setFocus(0)
 
 		// Search bar is at rows 0-2 in the sidebar content (border takes 3 rows)
@@ -187,16 +186,10 @@ func (m *home) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		// Sidebar items start after search bar (row 0) + border (2 rows) + blank line (1 row) = row 4
 		itemRow := contentY - 4
 		if itemRow >= 0 {
-			log.ErrorLog.Printf("[DEBUG] SIDEBAR CLICK: itemRow=%d, calling ClickItem", itemRow)
 			m.sidebar.ClickItem(itemRow)
-			log.ErrorLog.Printf("[DEBUG] SIDEBAR CLICK: calling filterInstancesByTopic")
 			m.filterInstancesByTopic()
-			log.ErrorLog.Printf("[DEBUG] SIDEBAR CLICK: calling instanceChanged")
-			cmd := m.instanceChanged()
-			log.ErrorLog.Printf("[DEBUG] SIDEBAR CLICK: instanceChanged returned OK")
-			return m, cmd
+			return m, m.instanceChanged()
 		}
-		log.ErrorLog.Printf("[DEBUG] SIDEBAR CLICK: no handler matched for contentY=%d", contentY)
 	} else if x < m.sidebarWidth+m.listWidth {
 		// Click in instance list
 		m.setFocus(1)
@@ -2247,34 +2240,22 @@ func (m *home) startNewChatAgent() (tea.Model, tea.Cmd) {
 
 // createChatAgent creates and starts a new chat agent with the given display name.
 func (m *home) createChatAgent(name string) (tea.Model, tea.Cmd) {
-	log.ErrorLog.Printf("[DEBUG] createChatAgent: start with name=%q", name)
-	defer func() {
-		if r := recover(); r != nil {
-			log.ErrorLog.Printf("[DEBUG] createChatAgent: PANIC CAUGHT AT TOP LEVEL: %v", r)
-		}
-	}()
-
 	slug := slugify(name)
-	log.ErrorLog.Printf("[DEBUG] createChatAgent: slugified to %q", slug)
 
 	if err := session.EnsureAgentDir(slug); err != nil {
 		m.state = stateDefault
 		return m, m.handleError(fmt.Errorf("could not create agent directory: %w", err))
 	}
-	log.ErrorLog.Printf("[DEBUG] createChatAgent: ensured agent dir")
-
 	if err := session.CopyTemplatesToAgentDir(slug); err != nil {
 		m.state = stateDefault
 		return m, m.handleError(fmt.Errorf("could not copy agent templates: %w", err))
 	}
-	log.ErrorLog.Printf("[DEBUG] createChatAgent: copied templates")
 
 	personalityDir, err := session.GetAgentPersonalityDir(slug)
 	if err != nil {
 		m.state = stateDefault
 		return m, m.handleError(fmt.Errorf("could not get agent personality dir: %w", err))
 	}
-	log.ErrorLog.Printf("[DEBUG] createChatAgent: got personality dir: %q", personalityDir)
 
 	agent, err := session.NewInstance(session.InstanceOptions{
 		Title:           name,
@@ -2287,40 +2268,24 @@ func (m *home) createChatAgent(name string) (tea.Model, tea.Cmd) {
 		m.state = stateDefault
 		return m, m.handleError(fmt.Errorf("could not create chat agent: %w", err))
 	}
-	log.ErrorLog.Printf("[DEBUG] createChatAgent: created instance")
 
 	m.newInstanceFinalizer = m.list.AddInstance(agent)
-	log.ErrorLog.Printf("[DEBUG] createChatAgent: added to list")
-
 	m.list.SelectInstanceByRef(agent)
-	log.ErrorLog.Printf("[DEBUG] createChatAgent: selected instance")
-
 	m.state = stateDefault
-	log.ErrorLog.Printf("[DEBUG] createChatAgent: set state to default")
 
 	// Refresh the list so the new agent appears in the Chat tab.
 	m.refreshListChatFilter()
-	log.ErrorLog.Printf("[DEBUG] createChatAgent: refreshed chat filter")
 
 	// Notify the tabbed window about the new selection so it enters chat mode
 	// and clears stale content from any previously selected instance.
-	log.ErrorLog.Printf("[DEBUG] createChatAgent: calling instanceChanged")
 	instanceChangedCmd := m.instanceChanged()
-	log.ErrorLog.Printf("[DEBUG] createChatAgent: instanceChanged returned")
 
-	startCmd := func() (msg tea.Msg) {
-		defer func() {
-			if r := recover(); r != nil {
-				log.ErrorLog.Printf("createChatAgent: panic in startCmd: %v", r)
-				msg = instanceStartedMsg{instance: agent, err: fmt.Errorf("internal error: %v", r)}
-			}
-		}()
+	startCmd := func() tea.Msg {
 		if err := agent.Start(true); err != nil {
 			return instanceStartedMsg{instance: agent, err: err}
 		}
 		return instanceStartedMsg{instance: agent, err: nil}
 	}
 
-	log.ErrorLog.Printf("[DEBUG] createChatAgent: returning with commands")
 	return m, tea.Batch(tea.WindowSize(), instanceChangedCmd, startCmd)
 }
