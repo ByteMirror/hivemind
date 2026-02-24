@@ -21,9 +21,9 @@ const serverInstructions = "You are running inside Hivemind, a multi-agent orche
 	"Rules:\n" +
 	"- Call memory_search at the start of every session and before answering questions about the user's preferences, setup, past decisions, or active projects.\n" +
 	"- Call memory_write whenever you learn something durable: user setup, preferences, project decisions, recurring patterns.\n" +
-	"- Write stable facts (hardware, OS, global preferences) with scope=\"global\" (or to global.md). Write project decisions with scope=\"repo\" (dated files default to repo).\n" +
+	"- Write stable facts (hardware, OS, global preferences) with scope=\"global\" — this writes to system/global.md which is always in agent context. Write project decisions with scope=\"repo\" (dated files default to repo).\n" +
 	"- Never assume you know the user's preferences — search first.\n" +
-	"- Files in system/ are always injected into CLAUDE.md — use memory_pin to promote important files.\n" +
+	"- Files in system/ are always injected into CLAUDE.md — use memory_pin to promote important files there.\n" +
 	"- Use memory_tree to see the file structure. All memory changes are git-versioned; use memory_history to review."
 
 // HivemindMCPServer wraps an MCP server with Hivemind-specific state.

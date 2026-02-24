@@ -56,7 +56,11 @@ func NewManager(dir string, provider EmbeddingProvider) (*Manager, error) {
 	sysGlobal := filepath.Join(sysDir, "global.md")
 	if _, err := os.Stat(rootGlobal); err == nil {
 		if _, err := os.Stat(sysGlobal); errors.Is(err, os.ErrNotExist) {
-			_ = os.Rename(rootGlobal, sysGlobal)
+			if renameErr := os.Rename(rootGlobal, sysGlobal); renameErr == nil {
+				// Update search index: remove old path, index new path.
+				_ = mgr.Sync("global.md")
+				_ = mgr.Sync(filepath.Join("system", "global.md"))
+			}
 		}
 	}
 

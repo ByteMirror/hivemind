@@ -2,8 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -22,12 +20,21 @@ const (
 	focusContent
 )
 
+// memoryFile combines tree metadata with list metadata for display.
+type memoryFile struct {
+	Path        string
+	Description string
+	IsSystem    bool
+	SizeBytes   int64
+	UpdatedAt   int64 // Unix ms
+}
+
 // MemoryBrowser is a full-screen split-pane memory file viewer and editor.
 type MemoryBrowser struct {
 	mgr             *memory.Manager
-	files           []memory.FileInfo
+	files           []memoryFile
 	selectedIdx     int
-	content         string // raw file content for the selected file
+	content         string // file body (frontmatter stripped) for the selected file
 	originalContent string // content before edit started
 
 	editing  bool
@@ -44,10 +51,6 @@ func NewMemoryBrowser(mgr *memory.Manager) (*MemoryBrowser, error) {
 	if mgr == nil {
 		return nil, fmt.Errorf("memory manager is nil")
 	}
-	files, err := mgr.List()
-	if err != nil {
-		return nil, fmt.Errorf("list memory files: %w", err)
-	}
 
 	ta := textarea.New()
 	ta.ShowLineNumbers = false
@@ -58,12 +61,12 @@ func NewMemoryBrowser(mgr *memory.Manager) (*MemoryBrowser, error) {
 
 	b := &MemoryBrowser{
 		mgr:      mgr,
-		files:    files,
 		textarea: ta,
 		focus:    focusList,
 	}
 
-	if len(files) > 0 {
+	b.refreshFileList()
+	if len(b.files) > 0 {
 		b.loadSelected()
 	}
 	return b, nil
@@ -77,7 +80,7 @@ func (b *MemoryBrowser) SelectedFile() string {
 	return b.files[b.selectedIdx].Path
 }
 
-// Content returns the raw content of the currently loaded file.
+// Content returns the body of the currently loaded file (frontmatter stripped).
 func (b *MemoryBrowser) Content() string { return b.content }
 
 // IsEditing returns true when the right pane is in edit mode.
@@ -106,7 +109,7 @@ func (b *MemoryBrowser) SetEditContent(s string) {
 	b.textarea.SetValue(s)
 }
 
-// SaveEdit writes the textarea content to disk and re-indexes the file.
+// SaveEdit writes the textarea content via the Manager and re-indexes.
 func (b *MemoryBrowser) SaveEdit() error {
 	if !b.editing {
 		return nil
@@ -116,35 +119,58 @@ func (b *MemoryBrowser) SaveEdit() error {
 		return fmt.Errorf("no file selected")
 	}
 	newContent := b.textarea.Value()
-	absPath := filepath.Join(b.mgr.Dir(), path)
-	if err := os.WriteFile(absPath, []byte(newContent), 0600); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
+	if err := b.mgr.WriteFile(path, newContent, ""); err != nil {
+		return fmt.Errorf("save %s: %w", path, err)
 	}
-	_ = b.mgr.Sync(path)
 	b.content = newContent
 	b.editing = false
 	b.textarea.Blur()
 	b.focus = focusList
-	// Refresh file list so size/mtime are current.
 	b.refreshFileList()
 	return nil
 }
 
-// DeleteSelected deletes the selected file from disk and removes it from the list.
+// DeleteSelected deletes the selected file via the Manager.
 func (b *MemoryBrowser) DeleteSelected() error {
 	path := b.SelectedFile()
 	if path == "" {
 		return nil
 	}
-	absPath := filepath.Join(b.mgr.Dir(), path)
-	if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
+	if err := b.mgr.Delete(path); err != nil {
 		return fmt.Errorf("delete %s: %w", path, err)
 	}
-	_ = b.mgr.Sync(path) // removes from index
 	b.refreshFileList()
 	if b.selectedIdx >= len(b.files) {
 		b.selectedIdx = browserMax(0, len(b.files)-1)
 	}
+	b.loadSelected()
+	return nil
+}
+
+// PinSelected moves the selected file into system/ (always-in-context).
+func (b *MemoryBrowser) PinSelected() error {
+	path := b.SelectedFile()
+	if path == "" {
+		return nil
+	}
+	if err := b.mgr.Pin(path); err != nil {
+		return err
+	}
+	b.refreshFileList()
+	b.loadSelected()
+	return nil
+}
+
+// UnpinSelected moves the selected file out of system/ back to root.
+func (b *MemoryBrowser) UnpinSelected() error {
+	path := b.SelectedFile()
+	if path == "" {
+		return nil
+	}
+	if err := b.mgr.Unpin(path); err != nil {
+		return err
+	}
+	b.refreshFileList()
 	b.loadSelected()
 	return nil
 }
@@ -194,6 +220,10 @@ func (b *MemoryBrowser) HandleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 
 	switch msg.String() {
 	case "esc":
+		if b.confirmDelete {
+			b.confirmDelete = false
+			return nil, false
+		}
 		if b.focus == focusContent {
 			b.focus = focusList
 			return nil, false
@@ -218,7 +248,7 @@ func (b *MemoryBrowser) HandleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 			b.loadSelected()
 		}
 	case "e":
-		if b.SelectedFile() != "" {
+		if b.SelectedFile() != "" && !b.confirmDelete {
 			b.EnterEditMode()
 		}
 	case "d":
@@ -232,6 +262,20 @@ func (b *MemoryBrowser) HandleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 		}
 	case "n":
 		b.confirmDelete = false
+	case "p":
+		if b.SelectedFile() != "" && !b.confirmDelete {
+			sel := b.selectedFile()
+			if sel != nil && !sel.IsSystem {
+				_ = b.PinSelected()
+			}
+		}
+	case "u":
+		if b.SelectedFile() != "" && !b.confirmDelete {
+			sel := b.selectedFile()
+			if sel != nil && sel.IsSystem {
+				_ = b.UnpinSelected()
+			}
+		}
 	}
 	return nil, false
 }
@@ -250,12 +294,19 @@ func (b *MemoryBrowser) Render() string {
 
 // --- private helpers ---
 
+func (b *MemoryBrowser) selectedFile() *memoryFile {
+	if len(b.files) == 0 || b.selectedIdx >= len(b.files) {
+		return nil
+	}
+	return &b.files[b.selectedIdx]
+}
+
 func (b *MemoryBrowser) paneSizes() (left, right int) {
 	total := b.width
 	if total < 40 {
 		total = 80
 	}
-	left = total * 28 / 100
+	left = total * 30 / 100
 	right = total - left
 	return
 }
@@ -266,21 +317,52 @@ func (b *MemoryBrowser) loadSelected() {
 		return
 	}
 	path := b.files[b.selectedIdx].Path
-	absPath := filepath.Join(b.mgr.Dir(), path)
-	data, err := os.ReadFile(absPath)
+	body, err := b.mgr.Read(path)
 	if err != nil {
 		b.content = fmt.Sprintf("(error reading file: %v)", err)
 		return
 	}
-	b.content = string(data)
+	b.content = body
 }
 
 func (b *MemoryBrowser) refreshFileList() {
-	files, err := b.mgr.List()
-	if err == nil {
-		b.files = files
+	tree, treeErr := b.mgr.Tree()
+	list, listErr := b.mgr.List()
+	if treeErr != nil && listErr != nil {
+		return
 	}
+
+	// Build a lookup from path → list metadata (for timestamps).
+	mtimeMap := make(map[string]int64, len(list))
+	for _, f := range list {
+		mtimeMap[f.Path] = f.UpdatedAt
+	}
+
+	var files []memoryFile
+	if treeErr == nil {
+		for _, t := range tree {
+			files = append(files, memoryFile{
+				Path:        t.Path,
+				Description: t.Description,
+				IsSystem:    t.IsSystem,
+				SizeBytes:   t.SizeBytes,
+				UpdatedAt:   mtimeMap[t.Path],
+			})
+		}
+	} else {
+		// Fallback to flat list if tree fails.
+		for _, f := range list {
+			files = append(files, memoryFile{
+				Path:      f.Path,
+				SizeBytes: f.SizeBytes,
+				UpdatedAt: f.UpdatedAt,
+			})
+		}
+	}
+	b.files = files
 }
+
+// --- styles ---
 
 var (
 	browserListBorderStyle = lipgloss.NewStyle().
@@ -298,8 +380,15 @@ var (
 	browserFileStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#dddddd"))
 
+	browserSystemFileStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#F0A868"))
+
 	browserFileMtimeStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#555555"))
+
+	browserDescStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#777777")).
+				Italic(true)
 
 	browserContentBorderStyle = lipgloss.NewStyle().
 					Border(lipgloss.RoundedBorder()).
@@ -336,11 +425,20 @@ func (b *MemoryBrowser) renderList(width int) string {
 	}
 
 	for i, f := range b.files {
+		// Build the display name with system indicator.
 		name := f.Path
-		mtime := time.UnixMilli(f.UpdatedAt).Format("2006-01-02")
+		prefix := "  "
+		if f.IsSystem {
+			prefix = "\U0001F4CC " // 📌
+		}
 
-		// Truncate name to fit
-		maxName := innerW - len(mtime) - 2
+		mtime := ""
+		if f.UpdatedAt > 0 {
+			mtime = time.UnixMilli(f.UpdatedAt).Format("Jan 02")
+		}
+
+		// Truncate name to fit.
+		maxName := innerW - len(prefix) - len(mtime) - 2
 		if maxName < 4 {
 			maxName = 4
 		}
@@ -348,16 +446,28 @@ func (b *MemoryBrowser) renderList(width int) string {
 			name = name[:maxName-1] + "…"
 		}
 
-		padding := innerW - len(name) - len(mtime)
+		padding := innerW - len(prefix) - len(name) - len(mtime)
 		if padding < 1 {
 			padding = 1
 		}
-		line := name + strings.Repeat(" ", padding) + mtime
+		line := prefix + name + strings.Repeat(" ", padding) + mtime
 
 		if i == b.selectedIdx {
 			sb.WriteString(browserSelectedFileStyle.Width(innerW).Render(line) + "\n")
+		} else if f.IsSystem {
+			sb.WriteString(browserSystemFileStyle.Render(line) + "\n")
 		} else {
 			sb.WriteString(browserFileStyle.Render(line) + "\n")
+		}
+
+		// Show description on next line if available.
+		if f.Description != "" {
+			desc := f.Description
+			maxDesc := innerW - 4
+			if len(desc) > maxDesc {
+				desc = desc[:maxDesc-1] + "…"
+			}
+			sb.WriteString(browserDescStyle.Render("    "+desc) + "\n")
 		}
 	}
 
@@ -379,6 +489,10 @@ func (b *MemoryBrowser) renderContent(width int) string {
 	title := b.SelectedFile()
 	if title == "" {
 		title = "—"
+	}
+	sel := b.selectedFile()
+	if sel != nil && sel.IsSystem {
+		title = "\U0001F4CC " + title // 📌
 	}
 	if b.editing {
 		title += " [editing]"
@@ -422,7 +536,11 @@ func (b *MemoryBrowser) renderHint() string {
 	if b.confirmDelete {
 		return browserHintStyle.Render("  [y] confirm delete  [n] cancel")
 	}
-	return browserHintStyle.Render("  [e] edit  [d] delete  [tab] switch pane  [esc] close")
+	sel := b.selectedFile()
+	if sel != nil && sel.IsSystem {
+		return browserHintStyle.Render("  [e] edit  [u] unpin  [d] delete  [tab] switch pane  [esc] close")
+	}
+	return browserHintStyle.Render("  [e] edit  [p] pin  [d] delete  [tab] switch pane  [esc] close")
 }
 
 func browserMax(a, b int) int {

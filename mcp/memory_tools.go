@@ -21,16 +21,22 @@ func handleMemoryWrite(mgr *memory.Manager) mcpserver.ToolHandlerFunc {
 		}
 
 		path := req.GetString("file", "")
+		scope := req.GetString("scope", "")
 		commitMsg := req.GetString("commit_message", "")
 
+		// Resolve scope when no explicit file path is given.
+		if path == "" && scope == "global" {
+			path = "system/global.md"
+		}
+
 		if path != "" {
-			// New behavior: create/overwrite specific file.
+			// Create/overwrite specific file.
 			if err := mgr.WriteFile(path, content, commitMsg); err != nil {
 				Log("memory_write error: %v", err)
 				return gomcp.NewToolResultError("failed to write memory: " + err.Error()), nil
 			}
 		} else {
-			// Legacy behavior: append to daily file.
+			// Default: append to daily file (YYYY-MM-DD.md).
 			if err := mgr.Write(content, ""); err != nil {
 				Log("memory_write error: %v", err)
 				return gomcp.NewToolResultError("failed to write memory: " + err.Error()), nil
