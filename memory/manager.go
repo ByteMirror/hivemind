@@ -2,7 +2,9 @@ package memory
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +21,7 @@ type Manager struct {
 	db       *sql.DB
 	provider EmbeddingProvider // nil == FTS-only
 	reranker Reranker          // optional; nil == no reranking
+	gitRepo  *GitRepo          // nil if git init failed (non-fatal)
 	mu       sync.RWMutex
 }
 
@@ -36,7 +39,28 @@ func NewManager(dir string, provider EmbeddingProvider) (*Manager, error) {
 	if provider == nil {
 		provider = &noopProvider{}
 	}
-	return &Manager{dir: dir, db: db, provider: provider}, nil
+
+	mgr := &Manager{dir: dir, db: db, provider: provider}
+
+	// Initialize git repo (non-fatal).
+	if repo, gitErr := InitGitRepo(dir); gitErr == nil {
+		mgr.gitRepo = repo
+	}
+
+	// Bootstrap system/ directory.
+	sysDir := filepath.Join(dir, "system")
+	_ = os.MkdirAll(sysDir, 0700)
+
+	// Migrate global.md → system/global.md if it exists at root but not in system/.
+	rootGlobal := filepath.Join(dir, "global.md")
+	sysGlobal := filepath.Join(sysDir, "global.md")
+	if _, err := os.Stat(rootGlobal); err == nil {
+		if _, err := os.Stat(sysGlobal); errors.Is(err, os.ErrNotExist) {
+			_ = os.Rename(rootGlobal, sysGlobal)
+		}
+	}
+
+	return mgr, nil
 }
 
 // Close releases resources held by the Manager.
@@ -80,7 +104,11 @@ func (m *Manager) Write(content, file string) error {
 		return fmt.Errorf("write memory: %w", err)
 	}
 
-	return m.Sync(file)
+	if err := m.Sync(file); err != nil {
+		return err
+	}
+	m.autoCommit("memory: append to " + file)
+	return nil
 }
 
 // Get reads lines from a memory file. from=0 means start; lines=0 means all.
@@ -100,31 +128,40 @@ func (m *Manager) Get(relPath string, from, lines int) (string, error) {
 	return strings.Join(allLines, "\n"), nil
 }
 
-// List returns metadata for all memory files.
+// List returns metadata for all memory files (recursive).
 func (m *Manager) List() ([]FileInfo, error) {
-	entries, err := os.ReadDir(m.dir)
-	if err != nil {
-		return nil, err
-	}
 	var files []FileInfo
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-			continue
-		}
-		info, err := entry.Info()
+	err := filepath.WalkDir(m.dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			continue
+			return nil
 		}
-		relPath := entry.Name()
-		chunkCount := m.countChunks(relPath)
+		name := d.Name()
+		if d.IsDir() {
+			if name == ".git" || name == ".index" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(name, ".md") {
+			return nil
+		}
+		rel, relErr := filepath.Rel(m.dir, path)
+		if relErr != nil {
+			return nil
+		}
+		info, infoErr := d.Info()
+		if infoErr != nil {
+			return nil
+		}
 		files = append(files, FileInfo{
-			Path:       relPath,
+			Path:       rel,
 			SizeBytes:  info.Size(),
 			UpdatedAt:  info.ModTime().UnixMilli(),
-			ChunkCount: chunkCount,
+			ChunkCount: m.countChunks(rel),
 		})
-	}
-	return files, nil
+		return nil
+	})
+	return files, err
 }
 
 func (m *Manager) countChunks(relPath string) int {
@@ -257,4 +294,212 @@ func (m *Manager) embedAndStore(chunkID int64, text, textHash string) error {
 func (m *Manager) deleteFileRecord(relPath string) error {
 	_, err := m.db.Exec("DELETE FROM files WHERE path=?", relPath)
 	return err
+}
+
+// Read returns the body of a memory file with frontmatter stripped.
+func (m *Manager) Read(relPath string) (string, error) {
+	abs, err := m.absPath(relPath)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("%s: %w", relPath, ErrFileNotFound)
+		}
+		return "", err
+	}
+	_, body := ParseFrontmatter(string(data))
+	return body, nil
+}
+
+// WriteFile creates or overwrites a memory file, re-indexes, and auto-commits.
+func (m *Manager) WriteFile(relPath, content, commitMsg string) error {
+	abs, err := m.absPath(relPath)
+	if err != nil {
+		return err
+	}
+
+	// Check read-only flag on existing file.
+	if fm, fmErr := m.ReadFileFrontmatter(relPath); fmErr == nil && fm.ReadOnly {
+		return fmt.Errorf("%s: %w", relPath, ErrReadOnly)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(abs), 0700); err != nil {
+		return fmt.Errorf("mkdir: %w", err)
+	}
+	if err := os.WriteFile(abs, []byte(content), 0600); err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+
+	if err := m.Sync(relPath); err != nil {
+		return err
+	}
+	if commitMsg == "" {
+		commitMsg = "memory: write " + relPath
+	}
+	m.autoCommit(commitMsg)
+	return nil
+}
+
+// Append adds content to an existing memory file, re-indexes, and auto-commits.
+func (m *Manager) Append(relPath, content string) error {
+	abs, err := m.absPath(relPath)
+	if err != nil {
+		return err
+	}
+
+	if fm, fmErr := m.ReadFileFrontmatter(relPath); fmErr == nil && fm.ReadOnly {
+		return fmt.Errorf("%s: %w", relPath, ErrReadOnly)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(abs), 0700); err != nil {
+		return fmt.Errorf("mkdir: %w", err)
+	}
+
+	f, err := os.OpenFile(abs, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return fmt.Errorf("open: %w", err)
+	}
+	defer f.Close()
+
+	stat, _ := f.Stat()
+	if stat.Size() > 0 {
+		if _, err := f.WriteString("\n\n"); err != nil {
+			return err
+		}
+	}
+	if _, err := f.WriteString(strings.TrimSpace(content) + "\n"); err != nil {
+		return err
+	}
+
+	if err := m.Sync(relPath); err != nil {
+		return err
+	}
+	m.autoCommit("memory: append to " + relPath)
+	return nil
+}
+
+// Move renames a memory file, re-indexes both paths, and auto-commits.
+func (m *Manager) Move(from, to string) error {
+	absFrom, err := m.absPath(from)
+	if err != nil {
+		return err
+	}
+	absTo, err := m.absPath(to)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(absFrom); errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%s: %w", from, ErrFileNotFound)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(absTo), 0700); err != nil {
+		return fmt.Errorf("mkdir: %w", err)
+	}
+	if err := os.Rename(absFrom, absTo); err != nil {
+		return fmt.Errorf("rename: %w", err)
+	}
+
+	// Re-index: remove old, index new.
+	_ = m.Sync(from) // removes old record since file gone
+	if err := m.Sync(to); err != nil {
+		return err
+	}
+	m.autoCommit(fmt.Sprintf("memory: move %s → %s", from, to))
+	return nil
+}
+
+// Delete removes a memory file, its index, and auto-commits.
+func (m *Manager) Delete(relPath string) error {
+	abs, err := m.absPath(relPath)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(abs); errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%s: %w", relPath, ErrFileNotFound)
+	}
+	if err := os.Remove(abs); err != nil {
+		return fmt.Errorf("remove: %w", err)
+	}
+	_ = m.Sync(relPath) // cleans up index
+	m.autoCommit("memory: delete " + relPath)
+	return nil
+}
+
+// Pin moves a file into the system/ directory (always-in-context).
+func (m *Manager) Pin(relPath string) error {
+	if strings.HasPrefix(filepath.Clean(relPath), "system/") || strings.HasPrefix(filepath.Clean(relPath), "system\\") {
+		return fmt.Errorf("%s: %w", relPath, ErrAlreadyPinned)
+	}
+	dest := filepath.Join("system", filepath.Base(relPath))
+	return m.Move(relPath, dest)
+}
+
+// Unpin moves a file out of the system/ directory back to root.
+func (m *Manager) Unpin(relPath string) error {
+	clean := filepath.Clean(relPath)
+	if !strings.HasPrefix(clean, "system/") && !strings.HasPrefix(clean, "system\\") {
+		return fmt.Errorf("%s: %w", relPath, ErrNotPinned)
+	}
+	dest := filepath.Base(relPath)
+	return m.Move(relPath, dest)
+}
+
+// History returns git log entries for a file, or all files if relPath is empty.
+// Returns nil if git is not available.
+func (m *Manager) History(relPath string, count int) ([]GitLogEntry, error) {
+	if m.gitRepo == nil {
+		return nil, nil
+	}
+	return m.gitRepo.Log(relPath, count)
+}
+
+// SystemFiles reads all files from system/ up to maxChars total.
+// Returns a map of relative path → body content (frontmatter stripped).
+func (m *Manager) SystemFiles(maxChars int) (map[string]string, error) {
+	sysDir := filepath.Join(m.dir, "system")
+	if _, err := os.Stat(sysDir); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+
+	result := make(map[string]string)
+	totalChars := 0
+
+	err := filepath.WalkDir(sysDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), ".md") {
+			return nil
+		}
+		rel, relErr := filepath.Rel(m.dir, path)
+		if relErr != nil {
+			return nil
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil
+		}
+		_, body := ParseFrontmatter(string(data))
+		if maxChars > 0 && totalChars+len(body) > maxChars {
+			return nil // skip files that would exceed budget
+		}
+		result[rel] = body
+		totalChars += len(body)
+		return nil
+	})
+	return result, err
+}
+
+// autoCommit is a nil-safe helper that commits all changes in the memory git repo.
+func (m *Manager) autoCommit(msg string) {
+	if m.gitRepo == nil {
+		return
+	}
+	err := m.gitRepo.AutoCommit(msg)
+	if err != nil && !errors.Is(err, ErrNoChanges) {
+		// Non-fatal: log would be ideal but we don't have a logger here.
+		_ = err
+	}
 }

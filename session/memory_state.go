@@ -6,19 +6,23 @@ import (
 	"github.com/ByteMirror/hivemind/memory"
 )
 
+const defaultSystemBudget = 4000
+
 var (
-	globalMemMgr   *memory.Manager
-	globalMemCount int
-	memMu          sync.RWMutex
+	globalMemMgr    *memory.Manager
+	globalMemCount  int
+	globalSysBudget int
+	memMu           sync.RWMutex
 )
 
 // SetMemoryManager configures the memory manager used for startup injection.
 // Called once from app.go when the TUI starts.
-func SetMemoryManager(mgr *memory.Manager, count int) {
+func SetMemoryManager(mgr *memory.Manager, count, systemBudget int) {
 	memMu.Lock()
 	defer memMu.Unlock()
 	globalMemMgr = mgr
 	globalMemCount = count
+	globalSysBudget = systemBudget
 }
 
 func getMemoryManager() *memory.Manager {
@@ -34,6 +38,15 @@ func getMemoryInjectCount() int {
 		return 5
 	}
 	return globalMemCount
+}
+
+func getSystemBudget() int {
+	memMu.RLock()
+	defer memMu.RUnlock()
+	if globalSysBudget <= 0 {
+		return defaultSystemBudget
+	}
+	return globalSysBudget
 }
 
 // GetMemoryManager returns the application-wide memory manager, or nil if memory is disabled.

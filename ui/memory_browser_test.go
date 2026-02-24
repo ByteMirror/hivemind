@@ -10,8 +10,8 @@ import (
 
 func TestMemoryBrowser_Navigation(t *testing.T) {
 	dir := t.TempDir()
-	// Write two memory files
-	os.WriteFile(filepath.Join(dir, "global.md"), []byte("# Global\nSetup info here."), 0600)
+	// Write two memory files (avoid global.md which gets migrated to system/).
+	os.WriteFile(filepath.Join(dir, "prefs.md"), []byte("# Prefs\nSetup info here."), 0600)
 	os.WriteFile(filepath.Join(dir, "notes.md"), []byte("# Notes\nSome notes."), 0600)
 
 	mgr, err := memory.NewManager(dir, nil)
@@ -21,7 +21,7 @@ func TestMemoryBrowser_Navigation(t *testing.T) {
 	defer mgr.Close()
 
 	// Sync files into index
-	_ = mgr.Sync("global.md")
+	_ = mgr.Sync("prefs.md")
 	_ = mgr.Sync("notes.md")
 
 	b, err := NewMemoryBrowser(mgr)
@@ -51,15 +51,15 @@ func TestMemoryBrowser_Navigation(t *testing.T) {
 
 func TestMemoryBrowser_LoadContent(t *testing.T) {
 	dir := t.TempDir()
-	content := "# Global\n\nThis is the global memory file."
-	os.WriteFile(filepath.Join(dir, "global.md"), []byte(content), 0600)
+	content := "# Setup\n\nThis is the setup memory file."
+	os.WriteFile(filepath.Join(dir, "setup.md"), []byte(content), 0600)
 
 	mgr, err := memory.NewManager(dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer mgr.Close()
-	_ = mgr.Sync("global.md")
+	_ = mgr.Sync("setup.md")
 
 	b, err := NewMemoryBrowser(mgr)
 	if err != nil {
@@ -74,14 +74,15 @@ func TestMemoryBrowser_LoadContent(t *testing.T) {
 
 func TestMemoryBrowser_EditAndSave(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "global.md"), []byte("original"), 0600)
+	// Use notes.md (not global.md) to avoid migration to system/.
+	os.WriteFile(filepath.Join(dir, "notes.md"), []byte("original"), 0600)
 
 	mgr, err := memory.NewManager(dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer mgr.Close()
-	_ = mgr.Sync("global.md")
+	_ = mgr.Sync("notes.md")
 
 	b, err := NewMemoryBrowser(mgr)
 	if err != nil {
@@ -99,7 +100,7 @@ func TestMemoryBrowser_EditAndSave(t *testing.T) {
 	}
 
 	// Re-load to verify
-	saved, _ := os.ReadFile(filepath.Join(dir, "global.md"))
+	saved, _ := os.ReadFile(filepath.Join(dir, "notes.md"))
 	if string(saved) != "updated content" {
 		t.Errorf("expected 'updated content', got %q", string(saved))
 	}

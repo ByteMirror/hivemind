@@ -248,7 +248,11 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 		if appConfig.Memory != nil && appConfig.Memory.StartupInjectCount > 0 {
 			injectCount = appConfig.Memory.StartupInjectCount
 		}
-		session.SetMemoryManager(memMgr, injectCount)
+		sysBudget := 4000
+		if appConfig.Memory != nil && appConfig.Memory.SystemBudgetChars > 0 {
+			sysBudget = appConfig.Memory.SystemBudgetChars
+		}
+		session.SetMemoryManager(memMgr, injectCount, sysBudget)
 		if stop, err := memMgr.StartWatcher(); err != nil {
 			log.WarningLog.Printf("memory watcher: %v", err)
 		} else {

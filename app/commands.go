@@ -391,5 +391,9 @@ func (m *home) restartMemoryManager() {
 	if m.appConfig.Memory != nil && m.appConfig.Memory.StartupInjectCount > 0 {
 		injectCount = m.appConfig.Memory.StartupInjectCount
 	}
-	session.SetMemoryManager(mgr, injectCount)
+	sysBudget := 4000
+	if m.appConfig.Memory != nil && m.appConfig.Memory.SystemBudgetChars > 0 {
+		sysBudget = m.appConfig.Memory.SystemBudgetChars
+	}
+	session.SetMemoryManager(mgr, injectCount, sysBudget)
 }

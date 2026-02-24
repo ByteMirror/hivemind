@@ -25,6 +25,13 @@ func injectMemoryContext(worktreePath string, mgr *memory.Manager, count int) er
 		count = 5
 	}
 
+	// Gather tree.
+	treeEntries, _ := mgr.Tree()
+
+	// Gather system/ file contents.
+	budget := getSystemBudget()
+	systemFiles, _ := mgr.SystemFiles(budget)
+
 	// Query memory with a broad context query.
 	query := filepath.Base(worktreePath) + " project setup preferences environment"
 	results, err := mgr.Search(query, memory.SearchOpts{MaxResults: count})
@@ -32,14 +39,14 @@ func injectMemoryContext(worktreePath string, mgr *memory.Manager, count int) er
 		return fmt.Errorf("memory query for CLAUDE.md: %w", err)
 	}
 
-	section := buildMemorySection(results)
+	section := buildMemorySection(treeEntries, systemFiles, results)
 
 	claudeMDPath := filepath.Join(worktreePath, "CLAUDE.md")
 	return upsertMemorySection(claudeMDPath, section)
 }
 
-// buildMemorySection formats search results into a Markdown section.
-func buildMemorySection(results []memory.SearchResult) string {
+// buildMemorySection formats the memory context into a Markdown section.
+func buildMemorySection(tree []memory.TreeEntry, systemFiles map[string]string, results []memory.SearchResult) string {
 	var b strings.Builder
 	b.WriteString(memoryInjectHeader + "\n")
 	b.WriteString("## Hivemind Memory\n\n")
@@ -48,23 +55,44 @@ func buildMemorySection(results []memory.SearchResult) string {
 	b.WriteString("### Rules\n\n")
 	b.WriteString("- **Before answering** any question about the user's preferences, setup, past decisions, or active projects: call `memory_search` first.\n")
 	b.WriteString("- **After every session** where you learn something durable: call `memory_write` to persist it.\n")
-	b.WriteString("- Write **stable facts** (hardware, OS, global preferences) to `global.md`. Write **dated notes** to the default `YYYY-MM-DD.md`.\n\n")
-
-	b.WriteString("### What is worth writing to memory\n\n")
-	b.WriteString("- User's OS, hardware, terminal and editor setup\n")
-	b.WriteString("- API keys, services, and credentials configured\n")
-	b.WriteString("- Project tech stack decisions and the reasoning behind them\n")
-	b.WriteString("- Recurring patterns the user likes or dislikes\n")
-	b.WriteString("- Anything you had to look up or figure out that the user will likely ask again\n\n")
+	b.WriteString("- Write **stable facts** (hardware, OS, global preferences) with `scope=\"global\"` (or to `global.md`). Write **project decisions** with `scope=\"repo\"` (dated files default to repo).\n")
+	b.WriteString("- **When asked to write memory at session end**: Do it immediately. Call memory_write with a concise summary of: (1) what was built/changed, (2) key decisions made, (3) any user preferences expressed.\n\n")
 
 	b.WriteString("### Tools\n\n")
 	b.WriteString("| Tool | When to use |\n")
 	b.WriteString("|------|-------------|\n")
 	b.WriteString("| `memory_search(query)` | Start of session, before answering questions about prior context |\n")
-	b.WriteString("| `memory_write(content, file?)` | When you discover something worth remembering |\n")
+	b.WriteString("| `memory_write(content, file?, scope?)` | scope=\"repo\" for this project's decisions; scope=\"global\" for user preferences/hardware |\n")
+	b.WriteString("| `memory_read(path)` | Read full file body (frontmatter stripped) |\n")
+	b.WriteString("| `memory_append(path, content)` | Append content to an existing memory file |\n")
 	b.WriteString("| `memory_get(path, from?, lines?)` | Read specific lines from a memory file |\n")
-	b.WriteString("| `memory_list()` | Browse all memory files |\n\n")
+	b.WriteString("| `memory_list()` | Browse all memory files |\n")
+	b.WriteString("| `memory_tree()` | View memory file tree with descriptions |\n")
+	b.WriteString("| `memory_move(from, to)` | Rename or reorganize a memory file |\n")
+	b.WriteString("| `memory_delete(path)` | Remove a memory file |\n")
+	b.WriteString("| `memory_pin(path)` | Move file to system/ (always-in-context) |\n")
+	b.WriteString("| `memory_unpin(path)` | Move file out of system/ |\n")
+	b.WriteString("| `memory_history(path?, count?)` | View git history of memory changes |\n\n")
 
+	// Memory tree.
+	if len(tree) > 0 {
+		b.WriteString("### Memory Tree\n\n")
+		b.WriteString("```\n")
+		b.WriteString(memory.FormatTree(tree))
+		b.WriteString("```\n\n")
+	}
+
+	// System context (full contents of system/ files).
+	if len(systemFiles) > 0 {
+		b.WriteString("### System Context\n\n")
+		for path, body := range systemFiles {
+			b.WriteString(fmt.Sprintf("**%s:**\n\n", path))
+			b.WriteString(strings.TrimSpace(body))
+			b.WriteString("\n\n")
+		}
+	}
+
+	// Search result snippets.
 	if len(results) > 0 {
 		b.WriteString("### Relevant context for this session\n\n")
 		for _, r := range results {
