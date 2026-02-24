@@ -48,6 +48,12 @@ type MemoryConfig struct {
 	// StartupInjectCount controls how many memory snippets are injected into
 	// CLAUDE.md when starting an agent. Default 5.
 	StartupInjectCount int `json:"startup_inject_count,omitempty"`
+	// GitEnabled controls whether memory changes are git-versioned.
+	// Default true. Set to false to disable auto-commits in the memory directory.
+	GitEnabled *bool `json:"git_enabled,omitempty"`
+	// SystemBudgetChars is the max characters of system/ file content injected
+	// into CLAUDE.md at startup. Default 4000.
+	SystemBudgetChars int `json:"system_budget_chars,omitempty"`
 }
 
 // Config represents the application configuration

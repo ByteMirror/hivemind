@@ -21,8 +21,10 @@ const serverInstructions = "You are running inside Hivemind, a multi-agent orche
 	"Rules:\n" +
 	"- Call memory_search at the start of every session and before answering questions about the user's preferences, setup, past decisions, or active projects.\n" +
 	"- Call memory_write whenever you learn something durable: user setup, preferences, project decisions, recurring patterns.\n" +
-	"- Write stable facts (hardware, OS, global preferences) to global.md. Write dated notes to the default YYYY-MM-DD.md.\n" +
-	"- Never assume you know the user's preferences — search first."
+	"- Write stable facts (hardware, OS, global preferences) with scope=\"global\" — this writes to system/global.md which is always in agent context. Write project decisions with scope=\"repo\" (dated files default to repo).\n" +
+	"- Never assume you know the user's preferences — search first.\n" +
+	"- Files in system/ are always injected into CLAUDE.md — use memory_pin to promote important files there.\n" +
+	"- Use memory_tree to see the file structure. All memory changes are git-versioned; use memory_history to review."
 
 // HivemindMCPServer wraps an MCP server with Hivemind-specific state.
 type HivemindMCPServer struct {
@@ -62,6 +64,9 @@ func NewHivemindMCPServer(brainClient BrainClient, hivemindDir, instanceID, repo
 	}
 	if memMgr != nil {
 		h.registerMemoryTools()
+		if tier >= 3 && brainClient != nil {
+			h.registerMemorySkills()
+		}
 	}
 
 	Log("server created: tier=%d tools registered", tier)
@@ -72,22 +77,17 @@ func NewHivemindMCPServer(brainClient BrainClient, hivemindDir, instanceID, repo
 func (h *HivemindMCPServer) registerMemoryTools() {
 	mgr := h.memoryMgr
 
-	memWrite := gomcp.NewTool("memory_write",
-		gomcp.WithDescription(
-			"Write to IDE-wide memory. "+
-				"Use this whenever you discover something worth remembering across sessions: "+
-				"user preferences, project facts, environment setup, API keys configured, "+
-				"decisions made and their rationale.",
-		),
-		gomcp.WithString("content",
+	// --- Read-only tools ---
+
+	memRead := gomcp.NewTool("memory_read",
+		gomcp.WithDescription("Read full body of a memory file (frontmatter stripped)."),
+		gomcp.WithReadOnlyHintAnnotation(true),
+		gomcp.WithString("path",
 			gomcp.Required(),
-			gomcp.Description("The fact or note to save. Plain text or Markdown."),
-		),
-		gomcp.WithString("file",
-			gomcp.Description("Target filename in ~/.hivemind/memory/ (default: YYYY-MM-DD.md)."),
+			gomcp.Description("Relative path within ~/.hivemind/memory/."),
 		),
 	)
-	h.server.AddTool(memWrite, handleMemoryWrite(mgr))
+	h.server.AddTool(memRead, handleMemoryRead(mgr))
 
 	memSearch := gomcp.NewTool("memory_search",
 		gomcp.WithDescription(
@@ -95,6 +95,7 @@ func (h *HivemindMCPServer) registerMemoryTools() {
 				"user preferences, project setups, or past decisions. "+
 				"Returns ranked snippets with file path and line numbers.",
 		),
+		gomcp.WithReadOnlyHintAnnotation(true),
 		gomcp.WithString("query",
 			gomcp.Required(),
 			gomcp.Description("Natural language search query."),
@@ -110,6 +111,7 @@ func (h *HivemindMCPServer) registerMemoryTools() {
 			"Read specific lines from a memory file. "+
 				"Use after memory_search to pull only the relevant lines.",
 		),
+		gomcp.WithReadOnlyHintAnnotation(true),
 		gomcp.WithString("path",
 			gomcp.Required(),
 			gomcp.Description("Relative path within ~/.hivemind/memory/ (from memory_search results)."),
@@ -125,8 +127,140 @@ func (h *HivemindMCPServer) registerMemoryTools() {
 
 	memList := gomcp.NewTool("memory_list",
 		gomcp.WithDescription("List all IDE-wide memory files with metadata."),
+		gomcp.WithReadOnlyHintAnnotation(true),
 	)
 	h.server.AddTool(memList, handleMemoryList(mgr))
+
+	memTree := gomcp.NewTool("memory_tree",
+		gomcp.WithDescription(
+			"View the memory file tree with descriptions from YAML frontmatter. "+
+				"Files in system/ are always injected into agent context.",
+		),
+		gomcp.WithReadOnlyHintAnnotation(true),
+	)
+	h.server.AddTool(memTree, handleMemoryTree(mgr))
+
+	memHistory := gomcp.NewTool("memory_history",
+		gomcp.WithDescription("View git history of memory changes. Omit path for all files."),
+		gomcp.WithReadOnlyHintAnnotation(true),
+		gomcp.WithString("path",
+			gomcp.Description("Optional: filter history to a specific file."),
+		),
+		gomcp.WithNumber("count",
+			gomcp.Description("Number of entries to return (default 10)."),
+		),
+	)
+	h.server.AddTool(memHistory, handleMemoryHistory(mgr))
+
+	// --- Write tools ---
+
+	memWrite := gomcp.NewTool("memory_write",
+		gomcp.WithDescription(
+			"Write to IDE-wide memory. Without path, appends to today's YYYY-MM-DD.md (legacy). "+
+				"With path, creates/overwrites the specified file. "+
+				"Use scope=\"global\" for user preferences, scope=\"repo\" for project decisions.",
+		),
+		gomcp.WithString("content",
+			gomcp.Required(),
+			gomcp.Description("The fact or note to save. Plain text or Markdown."),
+		),
+		gomcp.WithString("file",
+			gomcp.Description("Target filename (default: YYYY-MM-DD.md). Named files default to global scope."),
+		),
+		gomcp.WithString("scope",
+			gomcp.Description("Storage scope: \"global\" (cross-project) or \"repo\" (this project). Dated files default to repo scope."),
+		),
+		gomcp.WithString("commit_message",
+			gomcp.Description("Optional git commit message for this change."),
+		),
+	)
+	h.server.AddTool(memWrite, handleMemoryWrite(mgr))
+
+	memAppend := gomcp.NewTool("memory_append",
+		gomcp.WithDescription("Append content to an existing memory file."),
+		gomcp.WithString("path",
+			gomcp.Required(),
+			gomcp.Description("Relative path to the memory file."),
+		),
+		gomcp.WithString("content",
+			gomcp.Required(),
+			gomcp.Description("Content to append."),
+		),
+	)
+	h.server.AddTool(memAppend, handleMemoryAppend(mgr))
+
+	memMove := gomcp.NewTool("memory_move",
+		gomcp.WithDescription("Rename or move a memory file. Use \"/\" in the path to organize into topics."),
+		gomcp.WithString("from",
+			gomcp.Required(),
+			gomcp.Description("Current relative path."),
+		),
+		gomcp.WithString("to",
+			gomcp.Required(),
+			gomcp.Description("New relative path."),
+		),
+	)
+	h.server.AddTool(memMove, handleMemoryMove(mgr))
+
+	memDelete := gomcp.NewTool("memory_delete",
+		gomcp.WithDescription("Delete a memory file permanently."),
+		gomcp.WithString("path",
+			gomcp.Required(),
+			gomcp.Description("Relative path to delete."),
+		),
+	)
+	h.server.AddTool(memDelete, handleMemoryDelete(mgr))
+
+	memPin := gomcp.NewTool("memory_pin",
+		gomcp.WithDescription(
+			"Pin a memory file by moving it to system/. "+
+				"System files are always injected into agent context at startup.",
+		),
+		gomcp.WithString("path",
+			gomcp.Required(),
+			gomcp.Description("Relative path of file to pin."),
+		),
+	)
+	h.server.AddTool(memPin, handleMemoryPin(mgr))
+
+	memUnpin := gomcp.NewTool("memory_unpin",
+		gomcp.WithDescription("Unpin a memory file by moving it out of system/ to root."),
+		gomcp.WithString("path",
+			gomcp.Required(),
+			gomcp.Description("Relative path of file in system/ to unpin."),
+		),
+	)
+	h.server.AddTool(memUnpin, handleMemoryUnpin(mgr))
+}
+
+// registerMemorySkills registers subagent-based memory maintenance skills (Tier 3 only).
+func (h *HivemindMCPServer) registerMemorySkills() {
+	mgr := h.memoryMgr
+
+	memInit := gomcp.NewTool("memory_init",
+		gomcp.WithDescription(
+			"Bootstrap memory from codebase analysis. Spawns a specialized agent that "+
+				"analyzes the codebase and creates system/global.md, system/conventions.md, "+
+				"and project-specific memory files.",
+		),
+	)
+	h.server.AddTool(memInit, handleMemoryInit(mgr, h.brainClient, h.repoPath, h.instanceID))
+
+	memReflect := gomcp.NewTool("memory_reflect",
+		gomcp.WithDescription(
+			"Review recent memory activity and persist insights. Spawns an agent that "+
+				"consolidates duplicates, identifies patterns, and writes a reflection.",
+		),
+	)
+	h.server.AddTool(memReflect, handleMemoryReflect(mgr, h.brainClient, h.repoPath, h.instanceID))
+
+	memDefrag := gomcp.NewTool("memory_defrag",
+		gomcp.WithDescription(
+			"Reorganize aging memory files for clarity. Spawns an agent that merges "+
+				"duplicates, splits large files, and ensures clear frontmatter descriptions.",
+		),
+	)
+	h.server.AddTool(memDefrag, handleMemoryDefrag(mgr, h.brainClient, h.repoPath, h.instanceID))
 }
 
 // registerTier1Tools registers read-only Tier 1 tools.

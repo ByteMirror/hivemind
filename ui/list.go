@@ -271,7 +271,9 @@ func (l *List) AddInstance(instance *session.Instance) (finalize func()) {
 			log.ErrorLog.Printf("could not get repo name: %v", err)
 			return
 		}
-
+		if repoName == "" {
+			return // chat agents have no associated repo
+		}
 		l.addRepo(repoName)
 	}
 }

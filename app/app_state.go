@@ -63,12 +63,25 @@ func accumulateInstanceStats(instances []*session.Instance) (countByTopic map[st
 }
 
 func (m *home) updateSidebarItemsSingleRepo() {
+	// Chat tab has no code topics — show only ungrouped chat agents.
+	if m.sidebarTab == sidebarTabChat {
+		_, _, topicStatuses := accumulateInstanceStats(m.list.GetInstances())
+		m.sidebar.SetItems(nil, nil, len(m.list.GetInstances()), nil, nil, topicStatuses)
+		return
+	}
 	topicNames, sharedTopics, autoYesTopics := topicMeta(m.topics)
 	countByTopic, ungroupedCount, topicStatuses := accumulateInstanceStats(m.list.GetInstances())
 	m.sidebar.SetItems(topicNames, countByTopic, ungroupedCount, sharedTopics, autoYesTopics, topicStatuses)
 }
 
 func (m *home) updateSidebarItemsMultiRepo() {
+	// Chat tab in multi-repo mode: no repo groups or code topics, just ungrouped chat agents.
+	if m.sidebarTab == sidebarTabChat {
+		_, _, topicStatuses := accumulateInstanceStats(m.list.GetInstances())
+		m.sidebar.SetItems(nil, nil, len(m.list.GetInstances()), nil, nil, topicStatuses)
+		return
+	}
+
 	allInstances := m.list.GetInstances()
 	groups := make([]ui.RepoGroup, 0, len(m.activeRepoPaths))
 

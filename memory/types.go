@@ -1,5 +1,48 @@
 package memory
 
+import (
+	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
+)
+
+// Sentinel errors for memory operations.
+var (
+	ErrPathEscape    = errors.New("path escapes memory directory")
+	ErrReadOnly      = errors.New("file is marked read-only")
+	ErrFileNotFound  = errors.New("memory file not found")
+	ErrAlreadyPinned = errors.New("file is already in system/")
+	ErrNotPinned     = errors.New("file is not in system/")
+)
+
+// validateMemPath rejects paths that escape the memory directory or target
+// internal directories (.git/, .index/).
+func validateMemPath(relPath string) error {
+	if relPath == "" {
+		return fmt.Errorf("empty path: %w", ErrPathEscape)
+	}
+	if filepath.IsAbs(relPath) {
+		return fmt.Errorf("absolute path not allowed: %w", ErrPathEscape)
+	}
+	clean := filepath.Clean(relPath)
+	if strings.HasPrefix(clean, "..") {
+		return fmt.Errorf("path escapes root: %w", ErrPathEscape)
+	}
+	if strings.HasPrefix(clean, ".git") || strings.HasPrefix(clean, ".index") {
+		return fmt.Errorf("internal path not allowed: %w", ErrPathEscape)
+	}
+	return nil
+}
+
+// absPath validates relPath and returns the absolute path within the memory dir.
+func (m *Manager) absPath(relPath string) (string, error) {
+	if err := validateMemPath(relPath); err != nil {
+		return "", err
+	}
+	return filepath.Join(m.dir, relPath), nil
+}
+
 // SearchResult is one match returned from a memory search.
 type SearchResult struct {
 	Path      string // relative to memory dir, e.g. "global.md"

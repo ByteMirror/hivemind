@@ -367,8 +367,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 	case stateNewChatAgent:
 		return m.handleNewChatAgentKeys(msg)
 	case stateOnboarding:
-		// Block all keys during onboarding; the companion session drives interaction.
-		return m, nil
+		return m.handleOnboardingKeys(msg)
 	default:
 		return m.handleDefaultKeys(msg)
 	}
@@ -766,6 +765,24 @@ func (m *home) handleRenameTopicKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.state = stateDefault
 		m.menu.SetState(ui.StateDefault)
 		return m, tea.WindowSize()
+	}
+	return m, nil
+}
+
+// handleOnboardingKeys forwards keypresses to the companion's tmux session so
+// the user can interact with the companion during the first-launch ritual.
+func (m *home) handleOnboardingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	companion := m.findInstanceByTitle("companion")
+	if companion == nil || !companion.Started() {
+		// Companion not yet started — ignore keys.
+		return m, nil
+	}
+	data := keyToBytes(msg)
+	if data == nil {
+		return m, nil
+	}
+	if err := companion.SendKeys(string(data)); err != nil {
+		log.WarningLog.Printf("onboarding: failed to forward key to companion: %v", err)
 	}
 	return m, nil
 }
@@ -2259,6 +2276,10 @@ func (m *home) createChatAgent(name string) (tea.Model, tea.Cmd) {
 	// Refresh the list so the new agent appears in the Chat tab.
 	m.refreshListChatFilter()
 
+	// Notify the tabbed window about the new selection so it enters chat mode
+	// and clears stale content from any previously selected instance.
+	instanceChangedCmd := m.instanceChanged()
+
 	startCmd := func() tea.Msg {
 		if err := agent.Start(true); err != nil {
 			return instanceStartedMsg{instance: agent, err: err}
@@ -2266,5 +2287,5 @@ func (m *home) createChatAgent(name string) (tea.Model, tea.Cmd) {
 		return instanceStartedMsg{instance: agent, err: nil}
 	}
 
-	return m, tea.Batch(tea.WindowSize(), startCmd)
+	return m, tea.Batch(tea.WindowSize(), instanceChangedCmd, startCmd)
 }

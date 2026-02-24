@@ -22,7 +22,8 @@ func (m *home) startOnboarding() (tea.Model, tea.Cmd) {
 	personalityDir, err := session.GetAgentPersonalityDir(slug)
 	if err != nil {
 		log.WarningLog.Printf("onboarding: GetAgentPersonalityDir: %v", err)
-		return m, nil
+		startErr := err
+		return m, func() tea.Msg { return onboardingStartedMsg{err: startErr} }
 	}
 
 	companion, err := session.NewInstance(session.InstanceOptions{
@@ -35,7 +36,8 @@ func (m *home) startOnboarding() (tea.Model, tea.Cmd) {
 	})
 	if err != nil {
 		log.WarningLog.Printf("onboarding: NewInstance: %v", err)
-		return m, nil
+		startErr := err
+		return m, func() tea.Msg { return onboardingStartedMsg{err: startErr} }
 	}
 
 	m.allInstances = append(m.allInstances, companion)
@@ -89,5 +91,10 @@ func (m *home) viewOnboarding() string {
 		Padding(1, 2).
 		Render(preview)
 
-	return lipgloss.Place(m.width, totalHeight, lipgloss.Center, lipgloss.Center, panel)
+	hint := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		Render("Type to talk to your companion")
+
+	combined := lipgloss.JoinVertical(lipgloss.Center, panel, hint)
+	return lipgloss.Place(m.width, totalHeight, lipgloss.Center, lipgloss.Center, combined)
 }

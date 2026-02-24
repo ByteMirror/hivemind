@@ -220,7 +220,13 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 		},
 	}
 
-	if instance.Paused() {
+	if instance.IsChat {
+		// Chat agents have no persistent tmux session. Show them as paused on
+		// reload; the user can resume them to start a fresh session.
+		// Mark started=true so they survive future SaveInstances() calls.
+		instance.Status = Paused
+		instance.started.Store(true)
+	} else if instance.Paused() {
 		instance.tmuxSession = tmux.NewTmuxSession(instance.Title, instance.Program, instance.SkipPermissions)
 		instance.started.Store(true)
 	} else {
@@ -294,6 +300,9 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 func (i *Instance) RepoName() (string, error) {
 	if !i.started.Load() {
 		return "", ErrInstanceNotStarted
+	}
+	if i.gitWorktree == nil {
+		return "", nil // chat agents have no git worktree
 	}
 	return i.gitWorktree.GetRepoName(), nil
 }

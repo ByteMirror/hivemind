@@ -248,7 +248,11 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 		if appConfig.Memory != nil && appConfig.Memory.StartupInjectCount > 0 {
 			injectCount = appConfig.Memory.StartupInjectCount
 		}
-		session.SetMemoryManager(memMgr, injectCount)
+		sysBudget := 4000
+		if appConfig.Memory != nil && appConfig.Memory.SystemBudgetChars > 0 {
+			sysBudget = appConfig.Memory.SystemBudgetChars
+		}
+		session.SetMemoryManager(memMgr, injectCount, sysBudget)
 		if stop, err := memMgr.StartWatcher(); err != nil {
 			log.WarningLog.Printf("memory watcher: %v", err)
 		} else {
@@ -705,6 +709,10 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case onboardingStartedMsg:
 		if msg.err != nil {
 			log.WarningLog.Printf("onboarding: companion failed to start: %v", msg.err)
+			// Companion failed — fall back to the normal UI so the user is not stuck.
+			m.state = stateDefault
+			m.toastManager.Error("Companion failed to start: " + msg.err.Error())
+			return m, tea.Batch(tea.WindowSize(), m.toastTickCmd())
 		}
 		// Trigger a window size update so layout is recalculated for the companion view.
 		return m, tea.WindowSize()
