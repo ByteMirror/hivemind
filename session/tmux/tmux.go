@@ -207,6 +207,13 @@ func (t *TmuxSession) Start(workDir string) error {
 		log.InfoLog.Printf("Warning: failed to disable status bar for session %s: %v", t.sanitizedName, err)
 	}
 
+	// Keep the pane alive after the agent process exits so the terminal
+	// content remains visible and can be respawned with a shell.
+	remainCmd := exec.Command("tmux", "set-option", "-t", t.sanitizedName, "remain-on-exit", "on")
+	if err := t.cmdExec.Run(remainCmd); err != nil {
+		log.InfoLog.Printf("Warning: failed to set remain-on-exit for session %s: %v", t.sanitizedName, err)
+	}
+
 	t.reportProgress(3, "Configuring session...")
 
 	err = t.Restore()
@@ -305,6 +312,25 @@ func (t *TmuxSession) DoesSessionExist() bool {
 	// Using "-t name" does a prefix match, which is wrong. `-t=` does an exact match.
 	existsCmd := exec.Command("tmux", "has-session", fmt.Sprintf("-t=%s", t.sanitizedName))
 	return t.cmdExec.Run(existsCmd) == nil
+}
+
+// IsPaneDead returns true if the tmux pane has exited (the program finished)
+// but the session is still alive due to remain-on-exit.
+func (t *TmuxSession) IsPaneDead() bool {
+	cmd := exec.Command("tmux", "display-message", "-t", t.sanitizedName, "-p", "#{pane_dead}")
+	output, err := t.cmdExec.Output(cmd)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(output)) == "1"
+}
+
+// RespawnPane restarts a dead pane with the user's default shell in the given
+// working directory. This allows the user to manually restart the agent
+// (e.g. claude -r) after it exits.
+func (t *TmuxSession) RespawnPane(workDir string) error {
+	cmd := exec.Command("tmux", "respawn-pane", "-t", t.sanitizedName, "-c", workDir)
+	return t.cmdExec.Run(cmd)
 }
 
 // CleanupSessions kills all tmux sessions that start with "session-"

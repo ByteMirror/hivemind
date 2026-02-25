@@ -70,12 +70,6 @@ type Instance struct {
 	// AutomationID is set when this instance was spawned by an automation.
 	// Empty for manually-created instances.
 	AutomationID string
-	// PendingReview is true when this automation-triggered instance has finished
-	// and is waiting for the user to review its diff.
-	PendingReview bool
-	// CompletedAt is when the instance transitioned Running -> Ready as an automation result.
-	CompletedAt *time.Time
-
 	// BrainChildCount is the number of brain-spawned child instances (set by TUI, not persisted).
 	BrainChildCount int
 
@@ -122,11 +116,6 @@ type Instance struct {
 	// started is accessed atomically to prevent races between the async
 	// Start() goroutine and the UI tick handler that reads instance state.
 	started atomic.Bool
-	// tmuxDead is set when CapturePaneContent fails and DoesSessionExist
-	// returns false, indicating the agent process exited and the tmux
-	// session was destroyed. This prevents repeated failed capture attempts
-	// (and the resulting error toast spam) on every tick.
-	tmuxDead atomic.Bool
 	// tmuxSession is the tmux session for the instance.
 	tmuxSession *tmux.TmuxSession
 	// gitWorktree is the git worktree for the instance.
@@ -151,8 +140,6 @@ func (i *Instance) ToInstanceData() InstanceData {
 		Role:            i.Role,
 		ParentTitle:     i.ParentTitle,
 		AutomationID:    i.AutomationID,
-		PendingReview:   i.PendingReview,
-		CompletedAt:     i.CompletedAt,
 	}
 
 	// Only include worktree data if gitWorktree is initialized
@@ -196,8 +183,6 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 		Role:            data.Role,
 		ParentTitle:     data.ParentTitle,
 		AutomationID:    data.AutomationID,
-		PendingReview:   data.PendingReview,
-		CompletedAt:     data.CompletedAt,
 		gitWorktree: git.NewGitWorktreeFromStorage(
 			data.Worktree.RepoPath,
 			data.Worktree.WorktreePath,
@@ -299,11 +284,6 @@ func (i *Instance) SetStatus(status Status) {
 	if i.Status == Running && status == Ready {
 		i.Notified = true
 		SendNotification("Hivemind", fmt.Sprintf("'%s' has finished", i.Title))
-		if i.AutomationID != "" {
-			now := time.Now()
-			i.PendingReview = true
-			i.CompletedAt = &now
-		}
 	}
 	if status == Running || status == Loading {
 		i.LastActiveAt = time.Now()
@@ -341,8 +321,3 @@ func (i *Instance) TmuxAlive() bool {
 	return i.tmuxSession.DoesSessionExist()
 }
 
-// IsTmuxDead returns true if the tmux session has been detected as dead.
-// The UI uses this to show a "session ended" message instead of the preview.
-func (i *Instance) IsTmuxDead() bool {
-	return i.tmuxDead.Load()
-}

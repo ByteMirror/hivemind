@@ -58,14 +58,6 @@ func (m *home) handleActionCreateInstance(action brain.ActionRequest) (tea.Model
 		return m, m.pollBrainActions()
 	}
 
-	// Check instance limit.
-	if len(m.allInstances) >= GlobalInstanceLimit {
-		action.ResponseCh <- brain.ActionResponse{
-			Error: fmt.Sprintf("instance limit reached (%d)", GlobalInstanceLimit),
-		}
-		return m, m.pollBrainActions()
-	}
-
 	// Check for duplicate title.
 	if m.findInstanceByTitle(title) != nil {
 		action.ResponseCh <- brain.ActionResponse{Error: fmt.Sprintf("instance %q already exists", title)}
@@ -142,14 +134,15 @@ func (m *home) handleActionCreateInstance(action brain.ActionRequest) (tea.Model
 
 		if startErr != nil {
 			responseCh <- brain.ActionResponse{Error: "failed to start instance: " + startErr.Error()}
-			return brainInstanceFailedMsg{title: instance.Title}
+			return brainInstanceFailedMsg{title: instance.Title, err: startErr}
 		}
 
 		// Send initial prompt if provided.
 		if prompt != "" {
-			// Give the agent a moment to initialize.
-			time.Sleep(2 * time.Second)
-			instance.SendPrompt(prompt)
+			instance.WaitForReady(30 * time.Second)
+			if err := instance.SendPrompt(prompt); err != nil {
+				log.ErrorLog.Printf("brain: failed to send prompt to %q: %v", instance.Title, err)
+			}
 		}
 
 		responseCh <- brain.ActionResponse{

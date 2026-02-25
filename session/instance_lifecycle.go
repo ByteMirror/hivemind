@@ -376,9 +376,6 @@ func (i *Instance) Resume() error {
 		return fmt.Errorf("can only resume paused instances")
 	}
 
-	// Reset the dead flag so the resumed session will be polled normally.
-	i.tmuxDead.Store(false)
-
 	// Main-repo instances have no worktree to set up; just restart the tmux session.
 	if i.mainRepo {
 		i.LoadingTotal = 2
@@ -478,60 +475,4 @@ func (i *Instance) Resume() error {
 	return nil
 }
 
-// Restart recreates the tmux session for an instance whose agent process has
-// exited (tmuxDead). If the worktree directory still exists it is reused;
-// otherwise the worktree is recreated from the branch (like Resume).
-func (i *Instance) Restart() error {
-	if !i.started.Load() {
-		return ErrInstanceNotStarted
-	}
-	if !i.tmuxDead.Load() {
-		return fmt.Errorf("instance is not dead, use Resume for paused instances")
-	}
-
-	i.LoadingTotal = 4
-	i.setLoadingProgress(1, "Restarting agent...")
-
-	worktreePath := i.gitWorktree.GetWorktreePath()
-
-	// If the worktree directory is gone, recreate it from the branch
-	if _, err := os.Stat(worktreePath); err != nil {
-		i.setLoadingProgress(2, "Recreating worktree...")
-		if err := i.gitWorktree.Setup(); err != nil {
-			return fmt.Errorf("failed to recreate worktree: %w", err)
-		}
-	}
-
-	if isClaudeProgram(i.Program) {
-		repoPath := i.Path
-		title := i.Title
-		go func() {
-			if err := registerMCPServer(worktreePath, repoPath, title); err != nil {
-				log.WarningLog.Printf("failed to write MCP config: %v", err)
-			}
-		}()
-	}
-
-	if memMgr := getMemoryManager(); memMgr != nil {
-		count := getMemoryInjectCount()
-		repoMgr, _ := GetOrCreateRepoManager(filepath.Base(worktreePath))
-		go func() {
-			if err := InjectMemoryContext(worktreePath, memMgr, repoMgr, count); err != nil {
-				log.WarningLog.Printf("memory inject: %v", err)
-			}
-		}()
-	}
-
-	i.setLoadingProgress(3, "Creating new session...")
-
-	// The old tmux session is dead, create a fresh one with the same name
-	if err := i.tmuxSession.Start(worktreePath); err != nil {
-		return fmt.Errorf("failed to restart session: %w", err)
-	}
-
-	i.tmuxDead.Store(false)
-	i.setLoadingProgress(4, "Ready")
-	i.SetStatus(Running)
-	return nil
-}
 

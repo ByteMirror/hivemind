@@ -103,6 +103,15 @@ func (m *home) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		// Route to memory browser when it is open.
+		if m.state == stateMemoryBrowser && m.memoryBrowser != nil {
+			if msg.Button == tea.MouseButtonWheelUp {
+				m.memoryBrowser.ScrollUp(3)
+			} else {
+				m.memoryBrowser.ScrollDown(3)
+			}
+			return m, nil
+		}
 		// Scroll the instance list when mouse is over it.
 		if msg.X >= m.sidebarWidth && msg.X < m.sidebarWidth+m.listWidth {
 			switch msg.Button {
@@ -364,8 +373,6 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m.handleSkillPickerKeys(msg)
 	case stateInlineComment:
 		return m.handleInlineCommentInputKeys(msg)
-	case stateReviewSendBack:
-		return m.handleReviewSendBackKeys(msg)
 	case stateAutomations:
 		return m.handleAutomationsKeys(msg)
 	case stateNewAutomation:
@@ -1198,13 +1205,6 @@ func (m *home) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *home) handleDefaultKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// If a PendingReview instance is selected, intercept review action keys first.
-	if selected := m.list.GetSelectedInstance(); selected != nil && selected.PendingReview {
-		if model, cmd := m.handleReviewActions(msg); model != tea.Model(m) {
-			return model, cmd
-		}
-	}
-
 	// Exit scrolling mode when ESC is pressed and preview pane is in scrolling mode
 	// Check if Escape key was pressed and we're not in the diff tab (meaning we're in preview tab)
 	// Always check for escape key first to ensure it doesn't get intercepted elsewhere
@@ -1482,20 +1482,7 @@ func (m *home) handleDefaultKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case keys.KeyResume:
 		selected := m.list.GetSelectedInstance()
-		if selected == nil {
-			return m, nil
-		}
-		if selected.IsTmuxDead() {
-			// Restart a dead instance (agent process exited)
-			selected.SetStatus(session.Loading)
-			selected.LoadingMessage = "Restarting agent..."
-			restartCmd := func() tea.Msg {
-				err := selected.Restart()
-				return instanceResumedMsg{instance: selected, err: err, wasDead: true}
-			}
-			return m, tea.Batch(tea.WindowSize(), restartCmd)
-		}
-		if selected.Status != session.Paused {
+		if selected == nil || selected.Status != session.Paused {
 			return m, nil
 		}
 		selected.SetStatus(session.Loading)
@@ -1814,11 +1801,6 @@ func keyToBytes(msg tea.KeyMsg) []byte {
 // skipPermissions controls whether the instance skips permission prompts.
 // Returns the new instance or an error command if creation fails.
 func (m *home) createNewInstance(skipPermissions bool) (*session.Instance, tea.Cmd) {
-	if m.list.TotalInstances() >= GlobalInstanceLimit {
-		return nil, m.handleError(
-			fmt.Errorf("you can't create more than %d instances", GlobalInstanceLimit))
-	}
-
 	topicName := m.selectedTopicNameForNewInstance()
 	repoPath := m.repoPathForNewInstance()
 
@@ -1923,71 +1905,6 @@ func (m *home) keydownCallback(name keys.KeyName) tea.Cmd {
 		}
 
 		return keyupMsg{}
-	}
-}
-
-// handleReviewActions handles c/p/s/d keys for a PendingReview instance.
-// Returns the model with a changed identity only when an action was taken.
-func (m *home) handleReviewActions(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	selected := m.list.GetSelectedInstance()
-	if selected == nil || !selected.PendingReview {
-		return m, nil
-	}
-
-	switch msg.String() {
-	case "s": // send feedback back to agent
-		m.state = stateReviewSendBack
-		m.textInputOverlay = overlay.NewTextInputOverlay("Send feedback to agent", "")
-		return tea.Model(m), nil
-
-	case "d": // discard — clear review state
-		clearReviewState(selected)
-		_ = m.toastManager.Info(fmt.Sprintf("Discarded review for '%s'", selected.Title))
-		return tea.Model(m), m.instanceChanged()
-
-	case "c": // commit
-		clearReviewState(selected)
-		m.state = statePRTitle
-		m.textInputOverlay = overlay.NewTextInputOverlay("Commit message", "")
-		return tea.Model(m), nil
-
-	case "p": // create PR
-		clearReviewState(selected)
-		m.state = statePRTitle
-		m.textInputOverlay = overlay.NewTextInputOverlay("PR title", "")
-		return tea.Model(m), nil
-	}
-
-	// No review key matched — return unchanged model (same pointer = no action taken)
-	return m, nil
-}
-
-// handleReviewSendBackKeys handles text input when the user is sending feedback
-// back to a review-queue agent.
-func (m *home) handleReviewSendBackKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.textInputOverlay == nil {
-		m.state = stateDefault
-		return m, nil
-	}
-
-	switch msg.String() {
-	case "esc":
-		m.state = stateDefault
-		m.textInputOverlay = nil
-		return m, nil
-	case "enter":
-		feedback := m.textInputOverlay.GetValue()
-		m.textInputOverlay = nil
-		m.state = stateDefault
-		selected := m.list.GetSelectedInstance()
-		if selected != nil && feedback != "" {
-			_ = selected.SendPrompt(feedback)
-			clearReviewState(selected)
-		}
-		return m, m.instanceChanged()
-	default:
-		m.textInputOverlay.HandleKeyPress(msg)
-		return m, nil
 	}
 }
 

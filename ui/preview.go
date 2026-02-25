@@ -140,19 +140,6 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 				)),
 		))
 		return nil
-	case instance.IsTmuxDead():
-		p.setFallbackState(lipgloss.JoinVertical(lipgloss.Center,
-			lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("#FF6B6B")).
-				Render("Agent process has exited"),
-			"",
-			"Press 'r' to restart the agent in the same worktree.",
-			lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "#808080", Dark: "#808080"}).
-				Render("Your code changes are preserved."),
-		))
-		return nil
 	}
 
 	var content string

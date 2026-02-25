@@ -22,8 +22,6 @@ import (
 	zone "github.com/lrstanley/bubblezone"
 )
 
-const GlobalInstanceLimit = 10
-
 // Run is the main entrypoint into the application.
 func Run(ctx context.Context, program string, autoYes bool) error {
 	zone.NewGlobal()
@@ -82,8 +80,6 @@ const (
 	stateSkillPicker
 	// stateInlineComment is when the user is typing a comment for a diff line.
 	stateInlineComment
-	// stateReviewSendBack is when the user is typing feedback to send back to a review-queue agent.
-	stateReviewSendBack
 	// stateAutomations is the state when the automations manager screen is open.
 	stateAutomations
 	// stateNewAutomation is the state when the user is creating a new automation (multi-step).
@@ -540,7 +536,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		brainSrv := m.brainServer
 		return m, func() tea.Msg {
 			for _, instance := range instances {
-				if !instance.Started() || instance.Paused() || instance.IsTmuxDead() || instance.Status == session.Loading {
+				if !instance.Started() || instance.Paused() || instance.Status == session.Loading {
 					instance.LastActivity = nil
 					continue
 				}
@@ -636,19 +632,17 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateSidebarItems()
 		return m, tea.Batch(tea.WindowSize(), m.instanceChanged())
 	case brainInstanceFailedMsg:
-		// Brain-spawned instance failed to start — remove from list.
+		// Brain-spawned instance failed to start — remove from list and notify user.
 		m.list.KillInstanceByTitle(msg.title)
 		m.updateSidebarItems()
+		if msg.err != nil {
+			m.toastManager.Error(fmt.Sprintf("Instance %q failed: %v", msg.title, msg.err))
+			return m, tea.Batch(m.instanceChanged(), m.toastTickCmd())
+		}
 		return m, m.instanceChanged()
 	case instanceResumedMsg:
 		if msg.err != nil {
-			if msg.wasDead {
-				// Restart failed — revert to Running (tmuxDead is still set)
-				msg.instance.SetStatus(session.Running)
-			} else {
-				// Resume failed — revert to Paused status
-				msg.instance.SetStatus(session.Paused)
-			}
+			msg.instance.SetStatus(session.Paused)
 			m.updateSidebarItems()
 			return m, m.handleError(msg.err)
 		}
@@ -835,12 +829,10 @@ type instanceStartedMsg struct {
 	err      error
 }
 
-// instanceResumedMsg is sent when an async instance resume or restart completes.
+// instanceResumedMsg is sent when an async instance resume completes.
 type instanceResumedMsg struct {
 	instance *session.Instance
 	err      error
-	// wasDead is true if this was a restart of a dead instance (not a resume from paused)
-	wasDead bool
 }
 
 type keyupMsg struct{}
@@ -861,6 +853,7 @@ type brainInstanceStartedMsg struct {
 // brainInstanceFailedMsg is sent when a brain-spawned instance fails to start.
 type brainInstanceFailedMsg struct {
 	title string
+	err   error
 }
 
 // tickUpdateMetadataCmd is the callback to update the metadata of the instances every 500ms. Note that we iterate
@@ -914,10 +907,6 @@ func (m *home) checkDueAutomations() []tea.Cmd {
 func (m *home) spawnAutomationInstance(auto *config.Automation) tea.Cmd {
 	title := fmt.Sprintf("%s-%d", auto.Name, time.Now().Unix())
 
-	if len(m.allInstances) >= GlobalInstanceLimit {
-		log.WarningLog.Printf("automation %q: instance limit reached", auto.Name)
-		return nil
-	}
 	if m.findInstanceByTitle(title) != nil {
 		log.WarningLog.Printf("automation %q: duplicate title %q", auto.Name, title)
 		return nil
@@ -942,11 +931,15 @@ func (m *home) spawnAutomationInstance(auto *config.Automation) tea.Cmd {
 	brainSrv := m.brainServer
 	return func() tea.Msg {
 		if startErr := instance.Start(true); startErr != nil {
-			return brainInstanceFailedMsg{title: instance.Title}
+			log.ErrorLog.Printf("automation %q: instance %q failed to start: %v", auto.Name, instance.Title, startErr)
+			return brainInstanceFailedMsg{title: instance.Title, err: startErr}
 		}
+		log.InfoLog.Printf("automation %q: instance %q started (automationID=%s)", auto.Name, instance.Title, auto.ID)
 		if prompt != "" {
-			time.Sleep(2 * time.Second)
-			instance.SendPrompt(prompt)
+			instance.WaitForReady(30 * time.Second)
+			if err := instance.SendPrompt(prompt); err != nil {
+				log.ErrorLog.Printf("automation %q: failed to send prompt: %v", auto.Name, err)
+			}
 		}
 		if brainSrv != nil {
 			brainSrv.PushEvent(brain.Event{
@@ -996,7 +989,7 @@ func pushStatusEvent(brainSrv *brain.Server, instance *session.Instance, prevSta
 }
 
 // asyncUpdatePreview handles preview content fetching. Cheap instance states
-// (nil, Loading, Paused, TmuxDead) are handled synchronously on the main thread.
+// (nil, Loading, Paused) are handled synchronously on the main thread.
 // Running instances spawn a background goroutine for the expensive tmux capture-pane
 // call so it doesn't block the Bubble Tea event loop.
 func (m *home) asyncUpdatePreview(instance *session.Instance) tea.Cmd {
@@ -1010,7 +1003,7 @@ func (m *home) asyncUpdatePreview(instance *session.Instance) tea.Cmd {
 	// All other states are handled synchronously since they're cheap (no I/O).
 	needsAsync := instance != nil && instance.Started() &&
 		instance.Status != session.Loading && instance.Status != session.Paused &&
-		!instance.IsTmuxDead() && !m.tabbedWindow.IsPreviewInScrollMode()
+		!m.tabbedWindow.IsPreviewInScrollMode()
 
 	if !needsAsync {
 		m.tabbedWindow.UpdatePreview(instance)

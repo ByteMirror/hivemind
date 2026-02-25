@@ -604,19 +604,9 @@ func (l *List) groupChildrenUnderParents(items []*session.Instance) []*session.I
 }
 
 // HeaderHeight returns the number of rows consumed by the fixed header
-// (blank line + filter tabs + blank line + optional review section).
+// (blank line + filter tabs + blank line).
 func (l *List) HeaderHeight() int {
-	h := 3 // blank + tabs + blank
-	pendingCount := 0
-	for _, inst := range l.allItems {
-		if inst.PendingReview {
-			pendingCount++
-		}
-	}
-	if pendingCount > 0 {
-		h += pendingCount + 2 // review header + items + trailing blank
-	}
-	return h
+	return 3 // blank + tabs + blank
 }
 
 // totalItemRows returns the total number of rendered rows for all items

@@ -168,19 +168,6 @@ func (m *home) executeContextAction(action string) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(tea.WindowSize(), m.instanceChanged())
 
-	case "restart_instance":
-		selected := m.list.GetSelectedInstance()
-		if selected != nil && selected.IsTmuxDead() {
-			selected.SetStatus(session.Loading)
-			selected.LoadingMessage = "Restarting agent..."
-			restartCmd := func() tea.Msg {
-				err := selected.Restart()
-				return instanceResumedMsg{instance: selected, err: err, wasDead: true}
-			}
-			return m, tea.Batch(tea.WindowSize(), restartCmd)
-		}
-		return m, tea.Batch(tea.WindowSize(), m.instanceChanged())
-
 	case "move_instance":
 		selected := m.list.GetSelectedInstance()
 		if selected == nil {
@@ -320,9 +307,7 @@ func (m *home) openContextMenu() (tea.Model, tea.Cmd) {
 		{Label: "Zen mode", Action: "zen_mode"},
 		{Label: "Kill", Action: "kill_instance"},
 	}
-	if selected.IsTmuxDead() {
-		items = append(items, overlay.ContextMenuItem{Label: "Restart agent", Action: "restart_instance"})
-	} else if selected.Status == session.Paused {
+	if selected.Status == session.Paused {
 		items = append(items, overlay.ContextMenuItem{Label: "Resume", Action: "resume_instance"})
 	} else {
 		items = append(items, overlay.ContextMenuItem{Label: "Pause", Action: "pause_instance"})
@@ -376,15 +361,4 @@ func expandTilde(path string) string {
 	return path
 }
 
-// clearReviewState marks an instance as no longer pending review.
-func clearReviewState(instance *session.Instance) {
-	instance.PendingReview = false
-	instance.CompletedAt = nil
-}
 
-// discardReviewInstance clears the review state of a PendingReview instance.
-// The instance remains in the list but is no longer in the Review Queue.
-func (m *home) discardReviewInstance(instance *session.Instance) (tea.Model, tea.Cmd) {
-	clearReviewState(instance)
-	return m, nil
-}

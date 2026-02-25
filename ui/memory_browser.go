@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -39,6 +40,7 @@ type MemoryBrowser struct {
 
 	editing  bool
 	textarea textarea.Model
+	viewport viewport.Model
 	focus    focusPane
 
 	confirmDelete bool // true when waiting for delete confirmation
@@ -62,6 +64,7 @@ func NewMemoryBrowser(mgr *memory.Manager) (*MemoryBrowser, error) {
 	b := &MemoryBrowser{
 		mgr:      mgr,
 		textarea: ta,
+		viewport: viewport.New(0, 0),
 		focus:    focusList,
 	}
 
@@ -198,6 +201,12 @@ func (b *MemoryBrowser) SetSize(width, height int) {
 	_, rightW := b.paneSizes()
 	b.textarea.SetWidth(rightW - 4)
 	b.textarea.SetHeight(height - 6)
+	contentH := height - 6
+	if contentH < 1 {
+		contentH = 1
+	}
+	b.viewport.Width = rightW - 4
+	b.viewport.Height = contentH
 }
 
 // HandleKeyPress processes one key event.
@@ -238,10 +247,14 @@ func (b *MemoryBrowser) HandleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 	case "up", "k":
 		if b.focus == focusList {
 			b.SelectPrev()
+		} else if b.focus == focusContent {
+			b.ScrollUp(1)
 		}
 	case "down", "j":
 		if b.focus == focusList {
 			b.SelectNext()
+		} else if b.focus == focusContent {
+			b.ScrollDown(1)
 		}
 	case "enter":
 		if b.focus == focusList {
@@ -314,15 +327,34 @@ func (b *MemoryBrowser) paneSizes() (left, right int) {
 func (b *MemoryBrowser) loadSelected() {
 	if len(b.files) == 0 {
 		b.content = ""
+		b.viewport.SetContent("")
 		return
 	}
 	path := b.files[b.selectedIdx].Path
 	body, err := b.mgr.Read(path)
 	if err != nil {
 		b.content = fmt.Sprintf("(error reading file: %v)", err)
+		b.viewport.SetContent(b.content)
+		b.viewport.GotoTop()
 		return
 	}
 	b.content = body
+	b.viewport.SetContent(b.content)
+	b.viewport.GotoTop()
+}
+
+// ScrollUp scrolls the content pane up by n lines.
+func (b *MemoryBrowser) ScrollUp(n int) {
+	for range n {
+		b.viewport.LineUp(1)
+	}
+}
+
+// ScrollDown scrolls the content pane down by n lines.
+func (b *MemoryBrowser) ScrollDown(n int) {
+	for range n {
+		b.viewport.LineDown(1)
+	}
 }
 
 func (b *MemoryBrowser) refreshFileList() {
@@ -504,10 +536,13 @@ func (b *MemoryBrowser) renderContent(width int) string {
 		b.textarea.SetHeight(b.height - 6)
 		body = b.textarea.View()
 	} else {
-		body = lipgloss.NewStyle().
-			Width(innerW).
-			Height(b.height - 6).
-			Render(b.content)
+		b.viewport.Width = innerW
+		contentH := b.height - 6
+		if contentH < 1 {
+			contentH = 1
+		}
+		b.viewport.Height = contentH
+		body = b.viewport.View()
 	}
 
 	if b.confirmDelete {

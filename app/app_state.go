@@ -67,8 +67,9 @@ func (m *home) updateSidebarItemsSingleRepo() {
 	countByTopic, ungroupedCount, topicStatuses := accumulateInstanceStats(m.list.GetInstances())
 
 	// Count automation-spawned instances for the sidebar entry.
+	// Use the list's allItems (filtered by active repos) so the count matches what's visible.
 	autoInstanceCount := 0
-	for _, inst := range m.allInstances {
+	for _, inst := range m.list.GetInstances() {
 		if inst.AutomationID != "" {
 			autoInstanceCount++
 		}

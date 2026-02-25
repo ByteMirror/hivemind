@@ -114,24 +114,30 @@ func (i *Instance) Preview() (string, error) {
 	if !i.started.Load() || i.Status == Paused {
 		return "", nil
 	}
-	if i.tmuxDead.Load() {
-		return "", nil
-	}
 	content, err := i.tmuxSession.CapturePaneContent()
 	if err != nil {
-		// Check if the tmux session has actually died (agent process exited).
-		// If so, mark it dead to avoid repeated failed capture attempts.
 		if !i.tmuxSession.DoesSessionExist() {
-			i.tmuxDead.Store(true)
 			return "", nil
 		}
 		return "", err
 	}
+
+	// Agent process exited but tmux session alive (remain-on-exit).
+	// Respawn the pane with a shell so the user can restart manually.
+	if i.tmuxSession.IsPaneDead() {
+		workDir := i.GetWorkingPath()
+		if respawnErr := i.tmuxSession.RespawnPane(workDir); respawnErr != nil {
+			log.WarningLog.Printf("failed to respawn pane for %s: %v", i.Title, respawnErr)
+		} else {
+			log.InfoLog.Printf("agent exited in %q — respawned shell in %s", i.Title, workDir)
+		}
+	}
+
 	return content, nil
 }
 
 func (i *Instance) HasUpdated() (updated bool, hasPrompt bool) {
-	if !i.started.Load() || i.tmuxDead.Load() {
+	if !i.started.Load() {
 		return false, false
 	}
 	return i.tmuxSession.HasUpdated()
@@ -170,7 +176,7 @@ func (i *Instance) Attach() (chan struct{}, error) {
 }
 
 func (i *Instance) SetPreviewSize(width, height int) error {
-	if !i.started.Load() || i.Status == Paused || i.Status == Loading || i.tmuxDead.Load() {
+	if !i.started.Load() || i.Status == Paused || i.Status == Loading {
 		return nil
 	}
 	return i.tmuxSession.SetDetachedSize(width, height)
@@ -192,6 +198,41 @@ func (i *Instance) GetWorkingPath() string {
 		return i.gitWorktree.GetWorktreePath()
 	}
 	return i.Path
+}
+
+// WaitForReady polls the tmux output until it stabilizes, indicating the
+// program has finished initializing and is ready for input. Returns after
+// the output hasn't changed for 3 consecutive checks (~1.5s of stability),
+// or after the timeout elapses (best-effort, never errors on timeout).
+func (i *Instance) WaitForReady(timeout time.Duration) {
+	if !i.started.Load() || i.tmuxSession == nil {
+		return
+	}
+
+	const pollInterval = 500 * time.Millisecond
+	const stableNeeded = 3
+
+	deadline := time.Now().Add(timeout)
+	var lastContent string
+	stableCount := 0
+
+	for time.Now().Before(deadline) {
+		time.Sleep(pollInterval)
+		content, err := i.tmuxSession.CapturePaneContent()
+		if err != nil {
+			continue
+		}
+		clean := strings.TrimSpace(content)
+		if clean == lastContent && len(clean) > 0 {
+			stableCount++
+			if stableCount >= stableNeeded {
+				return
+			}
+		} else {
+			stableCount = 0
+			lastContent = clean
+		}
+	}
 }
 
 // SendPrompt sends a prompt to the tmux session
@@ -217,7 +258,7 @@ func (i *Instance) SendPrompt(prompt string) error {
 
 // PreviewFullHistory captures the entire tmux pane output including full scrollback history
 func (i *Instance) PreviewFullHistory() (string, error) {
-	if !i.started.Load() || i.Status == Paused || i.tmuxDead.Load() {
+	if !i.started.Load() || i.Status == Paused {
 		return "", nil
 	}
 	return i.tmuxSession.CapturePaneContentWithOptions("-", "-")
@@ -272,7 +313,7 @@ func (i *Instance) UpdateDiffStats() error {
 // Values are kept from the previous tick if the query fails, so the UI
 // doesn't flicker.
 func (i *Instance) UpdateResourceUsage() {
-	if !i.started.Load() || i.tmuxSession == nil || i.tmuxDead.Load() {
+	if !i.started.Load() || i.tmuxSession == nil {
 		i.CPUPercent = 0
 		i.MemMB = 0
 		i.SubAgentCount = 0

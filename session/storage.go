@@ -24,8 +24,6 @@ type InstanceData struct {
 	Role            string     `json:"role,omitempty"`
 	ParentTitle     string     `json:"parent_title,omitempty"`
 	AutomationID    string     `json:"automation_id,omitempty"`
-	PendingReview   bool       `json:"pending_review,omitempty"`
-	CompletedAt     *time.Time `json:"completed_at,omitempty"`
 	Program   string          `json:"program"`
 	Worktree  GitWorktreeData `json:"worktree"`
 	DiffStats DiffStatsData   `json:"diff_stats"`
