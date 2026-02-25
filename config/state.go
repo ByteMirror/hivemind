@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/ByteMirror/hivemind/log"
 )
@@ -176,14 +177,43 @@ func (s *State) GetRecentRepos() []string {
 	return s.RecentRepos
 }
 
+// IsWorktreePath checks whether a path is under the hivemind worktrees directory.
+func IsWorktreePath(path string) bool {
+	configDir, err := GetConfigDir()
+	if err != nil {
+		return false
+	}
+	worktreeDir := filepath.Join(configDir, "worktrees")
+	return strings.HasPrefix(path, worktreeDir+string(filepath.Separator)) || path == worktreeDir
+}
+
 // AddRecentRepo adds a repo path to the recent list if not already present.
+// Worktree paths are silently rejected.
 func (s *State) AddRecentRepo(path string) error {
+	if IsWorktreePath(path) {
+		return nil
+	}
 	for _, r := range s.RecentRepos {
 		if r == path {
 			return nil
 		}
 	}
 	s.RecentRepos = append(s.RecentRepos, path)
+	return SaveState(s)
+}
+
+// CleanRecentRepos removes worktree paths from the recent repos list.
+func (s *State) CleanRecentRepos() error {
+	cleaned := make([]string, 0, len(s.RecentRepos))
+	for _, r := range s.RecentRepos {
+		if !IsWorktreePath(r) {
+			cleaned = append(cleaned, r)
+		}
+	}
+	if len(cleaned) == len(s.RecentRepos) {
+		return nil
+	}
+	s.RecentRepos = cleaned
 	return SaveState(s)
 }
 

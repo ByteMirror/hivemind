@@ -6,25 +6,179 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
-const serverInstructions = "You are running inside Hivemind, a multi-agent orchestration system. " +
-	"You may be one of several agents working in parallel on the same codebase. " +
-	"IMPORTANT: At the start of every task, call update_status with your feature, files, and role. " +
-	"Call get_brain regularly to check for messages and avoid conflicts. " +
-	"Use send_message to coordinate with teammates when working on related areas. " +
-	"You can spawn new agents with create_instance, inject urgent messages into other agents' " +
-	"terminals with inject_message, and manage agent lifecycles with pause/resume/kill_instance. " +
-	"For complex multi-step tasks, use define_workflow to create a task DAG with dependencies, " +
-	"and complete_task to mark tasks as done (which auto-triggers dependent tasks). " +
-	"To wait for sub-agents to finish, use wait_for_events instead of polling get_brain in a loop. " +
-	"It long-polls for real-time events (status changes, messages, workflow triggers) with no missed events." +
-	"\n\nThis IDE has a persistent memory store shared across all sessions and projects.\n" +
-	"Rules:\n" +
-	"- Call memory_search at the start of every session and before answering questions about the user's preferences, setup, past decisions, or active projects.\n" +
-	"- Call memory_write whenever you learn something durable: user setup, preferences, project decisions, recurring patterns.\n" +
-	"- Write stable facts (hardware, OS, global preferences) with scope=\"global\" — this writes to system/global.md which is always in agent context. Write project decisions with scope=\"repo\" (dated files default to repo).\n" +
-	"- Never assume you know the user's preferences — search first.\n" +
-	"- Files in system/ are always injected into CLAUDE.md — use memory_pin to promote important files there.\n" +
-	"- Use memory_tree to see the file structure. All memory changes are git-versioned; use memory_history to review."
+const serverInstructions = `You are running inside Hivemind, a multi-agent orchestration system.
+You may be one of several agents working in parallel on the same codebase.
+Each agent runs in its own git worktree with its own tmux session.
+
+## Startup Protocol
+
+At the start of every task, perform these steps in order:
+
+1. Call update_status with the feature you're working on, the files you'll touch, and your role.
+   This registers you with the coordination brain so other agents can see what you're doing.
+2. Call get_brain to read the shared state: what other agents are working on, which files they're
+   touching, and any messages waiting for you.
+3. Call memory_search with a query relevant to your task. Memory contains prior decisions,
+   user preferences, architecture notes, and environment facts from previous sessions.
+
+If update_status returns file conflicts, coordinate with the other agent via send_message before
+proceeding. Do not silently work on the same files — this causes merge conflicts.
+
+## Multi-Agent Coordination
+
+You are part of a team. Other agents may be running concurrently in the same repository.
+
+### Staying in Sync
+- Call get_brain periodically (every few minutes during long tasks) to check for new messages
+  and detect if another agent has started working on files near yours.
+- After changing your focus or switching files, call update_status again so others see the change.
+
+### Communication
+- send_message(to, message): Send a targeted message to a specific agent by title, or broadcast
+  to all agents by leaving "to" empty. Messages appear in the recipient's next get_brain call.
+  Keep messages concise and actionable: what changed, what they should know.
+- inject_message(to, message): For urgent coordination only. This types directly into another
+  agent's terminal input, bypassing the polling-based message system. Use sparingly — the target
+  agent may be mid-thought.
+
+### Spawning Sub-Agents
+Use create_instance to delegate independent subtasks. Each new agent gets its own worktree and
+tmux session. Provide a clear, self-contained prompt — the sub-agent has no context from your
+conversation.
+
+Common patterns:
+- Spawn a "reviewer" agent to review your changes before creating a PR.
+- Spawn a "tester" agent to write tests for a feature you just implemented.
+- Spawn a "coder" agent for an independent subtask while you continue on your own work.
+
+### Lifecycle Management
+- pause_instance(target): Suspend an agent. Its tmux session is preserved; execution stops.
+- resume_instance(target): Resume a paused agent.
+- kill_instance(target): Terminate an agent permanently. The tmux session is destroyed and
+  the worktree is cleaned up.
+
+## Workflow Orchestration
+
+For complex multi-step tasks, define a workflow DAG instead of spawning agents manually.
+
+1. Call define_workflow with a JSON array of tasks. Each task has an id, title, prompt, role,
+   and a depends_on list of task IDs. Tasks whose dependencies are already satisfied will be
+   triggered immediately (each spawning a new agent instance).
+2. When a sub-agent finishes its work, it calls complete_task(task_id, status). If status is
+   "done", any tasks that depended on it (and whose other dependencies are also complete)
+   will be triggered automatically.
+3. Use get_workflow to inspect the current DAG state: which tasks are pending, running, or done.
+
+### Waiting for Sub-Agents
+Use wait_for_events instead of polling get_brain in a loop. It long-polls for real-time events
+with server-side buffering so no events are missed between polls.
+
+On first call, omit subscriber_id to create a subscription. Filter by event types
+(task_completed, instance_killed, message_received, etc.) and/or by instance titles.
+On subsequent calls, pass the returned subscriber_id to continue receiving events.
+
+Call unsubscribe_events when you no longer need the subscription.
+
+## Persistent Memory System
+
+Hivemind maintains an IDE-wide persistent memory store backed by git. Memory survives across
+sessions, projects, and agent instances. Use it to build institutional knowledge about the
+user's environment, preferences, and project decisions.
+
+### Architecture
+- Memory lives in ~/.hivemind/memory/ (global) and ~/.hivemind/memory/repos/<slug>/ (per-repo).
+- Files are Markdown (.md) with optional YAML frontmatter for descriptions.
+- The system/ directory contains pinned files that are always injected into every agent's
+  CLAUDE.md at startup. This is the highest-priority context.
+- All changes are automatically git-committed for versioning and history.
+
+### When to Read Memory
+- **Start of session**: Call memory_search with a query relevant to your task.
+- **Before answering questions** about the user's preferences, setup, past decisions, or
+  active projects: search first, never assume.
+- **When exploring the memory store**: Use memory_tree to see the file structure with
+  descriptions, then memory_read or memory_get to read specific files.
+
+### When to Write Memory
+- **After completing a significant task**: Record what was built, key decisions made, and
+  any user preferences observed. Do not wait to be asked.
+- **When you discover something durable**: User setup, environment facts, project conventions,
+  API configurations, recurring patterns the user likes or dislikes.
+- **At the end of a working session**: Summarize what was accomplished.
+- **When asked to write memory**: Do it immediately without asking for confirmation.
+
+### Scope and Organization
+- scope="global": Cross-project facts (hardware, OS, shell, editor, global preferences).
+  When no explicit file is given, writes to system/global.md which is always in agent context.
+- scope="repo": Project-specific decisions. Dated files (YYYY-MM-DD.md) default to repo scope.
+- Use YAML frontmatter (---\ndescription: ...\n---) to describe what each file contains.
+  These descriptions appear in the memory tree and help future agents find relevant context.
+
+### File Management
+- memory_pin(path): Move a file into system/ so it's always injected into agent context.
+  Use this for high-value reference files (conventions, architecture decisions).
+- memory_unpin(path): Move a file out of system/ back to root.
+- memory_move(from, to): Reorganize files. Use "/" in paths to create topic directories.
+- memory_delete(path): Remove a file permanently.
+
+### History and Maintenance
+- memory_history(path?, count?): View git log of memory changes. Omit path for all files.
+- memory_init: (Skill) Spawns a sub-agent to bootstrap memory from codebase analysis.
+- memory_reflect: (Skill) Spawns a sub-agent to review recent changes and consolidate insights.
+- memory_defrag: (Skill) Spawns a sub-agent to reorganize aging memory files.
+
+## Tool Reference
+
+### Coordination (Tier 1-2)
+| Tool | Purpose |
+|------|---------|
+| get_brain | Read shared state: agent statuses, file ownership, messages for you |
+| list_instances | See all agents, their status, branch, and activity |
+| update_status | Declare your feature, files, and role; detect conflicts |
+| send_message | Message another agent or broadcast to all |
+| get_my_session_summary | Your session: changed files, commits, diff stats |
+| get_my_diff | Full git diff of your changes since base commit |
+
+### Agent Lifecycle (Tier 3)
+| Tool | Purpose |
+|------|---------|
+| create_instance | Spawn a new agent with its own worktree |
+| inject_message | Type directly into another agent's terminal (urgent) |
+| pause_instance | Suspend an agent, preserving its tmux session |
+| resume_instance | Resume a paused agent |
+| kill_instance | Terminate an agent and clean up its worktree |
+
+### Workflows (Tier 3)
+| Tool | Purpose |
+|------|---------|
+| define_workflow | Create a task DAG with dependencies |
+| complete_task | Mark a task done/failed; triggers dependents |
+| get_workflow | Inspect the current DAG state |
+| wait_for_events | Long-poll for real-time events (replaces polling) |
+| unsubscribe_events | Remove an event subscription |
+
+### Memory
+| Tool | Purpose |
+|------|---------|
+| memory_search | Search memory by natural language query; returns ranked snippets |
+| memory_read | Read full file body (frontmatter stripped) |
+| memory_get | Read specific lines from a memory file |
+| memory_list | List all memory files with metadata |
+| memory_tree | View file tree with descriptions from frontmatter |
+| memory_history | View git history of memory changes |
+| memory_write | Write or overwrite a memory file |
+| memory_append | Append content to an existing memory file |
+| memory_move | Rename or reorganize a memory file |
+| memory_delete | Delete a memory file |
+| memory_pin | Move file to system/ (always-in-context) |
+| memory_unpin | Move file out of system/ to root |
+
+### Memory Skills (Tier 3)
+| Tool | Purpose |
+|------|---------|
+| memory_init | Bootstrap memory from codebase analysis (spawns agent) |
+| memory_reflect | Review recent changes and consolidate insights (spawns agent) |
+| memory_defrag | Reorganize aging memory files (spawns agent) |`
 
 // HivemindMCPServer wraps an MCP server with Hivemind-specific state.
 type HivemindMCPServer struct {
@@ -83,11 +237,15 @@ func (h *HivemindMCPServer) registerMemoryTools() {
 	// --- Read-only tools ---
 
 	memRead := gomcp.NewTool("memory_read",
-		gomcp.WithDescription("Read full body of a memory file (frontmatter stripped)."),
+		gomcp.WithDescription(
+			"Read the full body of a memory file with YAML frontmatter stripped. "+
+				"Use this after memory_search or memory_tree to read a file you've identified as relevant. "+
+				"Returns the file content as plain text.",
+		),
 		gomcp.WithReadOnlyHintAnnotation(true),
 		gomcp.WithString("path",
 			gomcp.Required(),
-			gomcp.Description("Relative path within ~/.hivemind/memory/."),
+			gomcp.Description("Relative path within the memory store (e.g. \"system/global.md\", \"2025-01-15.md\")."),
 		),
 	)
 	h.server.AddTool(memRead, handleMemoryRead(mgr))
@@ -136,21 +294,26 @@ func (h *HivemindMCPServer) registerMemoryTools() {
 
 	memTree := gomcp.NewTool("memory_tree",
 		gomcp.WithDescription(
-			"View the memory file tree with descriptions from YAML frontmatter. "+
-				"Files in system/ are always injected into agent context.",
+			"View the full memory file tree with descriptions extracted from YAML frontmatter. "+
+				"Shows file paths, sizes, and whether each file is in system/ (always-in-context). "+
+				"Use this to understand the memory layout before reading or writing files.",
 		),
 		gomcp.WithReadOnlyHintAnnotation(true),
 	)
 	h.server.AddTool(memTree, handleMemoryTree(mgr))
 
 	memHistory := gomcp.NewTool("memory_history",
-		gomcp.WithDescription("View git history of memory changes. Omit path for all files."),
+		gomcp.WithDescription(
+			"View the git history of memory changes. All memory writes are automatically committed. "+
+				"Omit path to see history across all files; provide a path to see changes to a specific file. "+
+				"Returns commit SHA, message, date, and affected files for each entry.",
+		),
 		gomcp.WithReadOnlyHintAnnotation(true),
 		gomcp.WithString("path",
-			gomcp.Description("Optional: filter history to a specific file."),
+			gomcp.Description("Filter history to a specific file (e.g. \"system/global.md\"). Omit for all files."),
 		),
 		gomcp.WithNumber("count",
-			gomcp.Description("Number of entries to return (default 10)."),
+			gomcp.Description("Number of history entries to return (default 10)."),
 		),
 	)
 	h.server.AddTool(memHistory, handleMemoryHistory(mgr))
@@ -159,51 +322,61 @@ func (h *HivemindMCPServer) registerMemoryTools() {
 
 	memWrite := gomcp.NewTool("memory_write",
 		gomcp.WithDescription(
-			"Write to IDE-wide memory. "+
-				"Use scope=\"global\" for cross-project facts (OS, hardware, user preferences) — writes to system/global.md. "+
-				"Use scope=\"repo\" (or omit for dated files) for project-specific decisions. "+
+			"Write content to the persistent memory store. Changes are automatically git-committed.\n\n"+
+				"Behavior depends on scope and file:\n"+
+				"- scope=\"global\" with no file: Appends to system/global.md (always in agent context).\n"+
+				"- scope=\"global\" with a file: Writes to the specified file in the global store.\n"+
+				"- scope=\"repo\" or omitted with no file: Appends to today's dated file (YYYY-MM-DD.md) in the repo store.\n"+
+				"- scope=\"repo\" with a file: Writes to the specified file in the repo store.\n\n"+
 				"Use this whenever you discover something worth remembering across sessions: "+
-				"user preferences, project facts, environment setup, API keys configured, "+
-				"decisions made and their rationale.",
+				"user preferences, project decisions, environment setup, architecture patterns, "+
+				"or anything you had to look up that the user will likely need again.",
 		),
 		gomcp.WithString("content",
 			gomcp.Required(),
-			gomcp.Description("The fact or note to save. Plain text or Markdown."),
+			gomcp.Description("The content to save. Markdown format recommended. Be concise but include enough context for a future agent to understand."),
 		),
 		gomcp.WithString("file",
-			gomcp.Description("Target filename (default: YYYY-MM-DD.md). Named files (e.g. global.md) default to global scope."),
+			gomcp.Description("Target filename (e.g. \"system/conventions.md\", \"auth-decisions.md\"). Default: today's date (YYYY-MM-DD.md)."),
 		),
 		gomcp.WithString("scope",
-			gomcp.Description("Storage scope: \"global\" (cross-project, OS/preferences) or \"repo\" (this project). Dated files default to repo scope."),
+			gomcp.Description("Storage scope: \"global\" for cross-project facts (OS, hardware, preferences) or \"repo\" for project-specific decisions. Dated files default to repo."),
 		),
 		gomcp.WithString("commit_message",
-			gomcp.Description("Optional git commit message for this change."),
+			gomcp.Description("Custom git commit message. If omitted, an automatic message is generated."),
 		),
 	)
 	h.server.AddTool(memWrite, handleMemoryWrite(mgr, repoMgr))
 
 	memAppend := gomcp.NewTool("memory_append",
-		gomcp.WithDescription("Append content to an existing memory file."),
+		gomcp.WithDescription(
+			"Append content to an existing memory file without overwriting. "+
+				"Use this to incrementally add notes to a file (e.g. a daily log or a running list of decisions). "+
+				"The content is appended after a newline separator.",
+		),
 		gomcp.WithString("path",
 			gomcp.Required(),
-			gomcp.Description("Relative path to the memory file."),
+			gomcp.Description("Relative path to the memory file to append to."),
 		),
 		gomcp.WithString("content",
 			gomcp.Required(),
-			gomcp.Description("Content to append."),
+			gomcp.Description("Content to append to the end of the file."),
 		),
 	)
 	h.server.AddTool(memAppend, handleMemoryAppend(mgr))
 
 	memMove := gomcp.NewTool("memory_move",
-		gomcp.WithDescription("Rename or move a memory file. Use \"/\" in the path to organize into topics."),
+		gomcp.WithDescription(
+			"Rename or move a memory file. Use \"/\" in paths to organize files into topic directories "+
+				"(e.g. \"notes.md\" -> \"architecture/notes.md\"). The search index is automatically updated.",
+		),
 		gomcp.WithString("from",
 			gomcp.Required(),
-			gomcp.Description("Current relative path."),
+			gomcp.Description("Current relative path of the file to move."),
 		),
 		gomcp.WithString("to",
 			gomcp.Required(),
-			gomcp.Description("New relative path."),
+			gomcp.Description("New relative path. Parent directories are created automatically."),
 		),
 	)
 	h.server.AddTool(memMove, handleMemoryMove(mgr))
@@ -219,21 +392,27 @@ func (h *HivemindMCPServer) registerMemoryTools() {
 
 	memPin := gomcp.NewTool("memory_pin",
 		gomcp.WithDescription(
-			"Pin a memory file by moving it to system/. "+
-				"System files are always injected into agent context at startup.",
+			"Pin a memory file by moving it into the system/ directory. "+
+				"Pinned files are the highest-priority context: their full contents are injected into "+
+				"every agent's CLAUDE.md at startup. Use this for critical reference material like "+
+				"coding conventions, architecture decisions, or environment setup that every agent should know.",
 		),
 		gomcp.WithString("path",
 			gomcp.Required(),
-			gomcp.Description("Relative path of file to pin."),
+			gomcp.Description("Relative path of the file to pin (e.g. \"conventions.md\" -> moves to \"system/conventions.md\")."),
 		),
 	)
 	h.server.AddTool(memPin, handleMemoryPin(mgr))
 
 	memUnpin := gomcp.NewTool("memory_unpin",
-		gomcp.WithDescription("Unpin a memory file by moving it out of system/ to root."),
+		gomcp.WithDescription(
+			"Unpin a memory file by moving it out of system/ back to the root directory. "+
+				"The file will no longer be injected into agent context at startup, but remains "+
+				"searchable via memory_search.",
+		),
 		gomcp.WithString("path",
 			gomcp.Required(),
-			gomcp.Description("Relative path of file in system/ to unpin."),
+			gomcp.Description("Relative path of the file in system/ to unpin (e.g. \"system/conventions.md\" -> moves to \"conventions.md\")."),
 		),
 	)
 	h.server.AddTool(memUnpin, handleMemoryUnpin(mgr))
@@ -245,25 +424,30 @@ func (h *HivemindMCPServer) registerMemorySkills() {
 
 	memInit := gomcp.NewTool("memory_init",
 		gomcp.WithDescription(
-			"Bootstrap memory from codebase analysis. Spawns a specialized agent that "+
-				"analyzes the codebase and creates system/global.md, system/conventions.md, "+
-				"and project-specific memory files.",
+			"Bootstrap the memory store from codebase analysis. Spawns a specialized sub-agent that "+
+				"examines the codebase, user environment, and project structure, then creates organized "+
+				"memory files: system/global.md (hardware, OS, tools), system/conventions.md (code patterns), "+
+				"and project-specific files. Call this once when memory is empty or after major project changes.",
 		),
 	)
 	h.server.AddTool(memInit, handleMemoryInit(mgr, h.brainClient, h.repoPath, h.instanceID))
 
 	memReflect := gomcp.NewTool("memory_reflect",
 		gomcp.WithDescription(
-			"Review recent memory activity and persist insights. Spawns an agent that "+
-				"consolidates duplicates, identifies patterns, and writes a reflection.",
+			"Review recent memory activity and persist insights. Spawns a sub-agent that reads "+
+				"the git history of recent memory changes, identifies patterns and duplicates, "+
+				"consolidates related notes, and writes a dated reflection summary. "+
+				"Useful after a busy session or when memory feels cluttered.",
 		),
 	)
 	h.server.AddTool(memReflect, handleMemoryReflect(mgr, h.brainClient, h.repoPath, h.instanceID))
 
 	memDefrag := gomcp.NewTool("memory_defrag",
 		gomcp.WithDescription(
-			"Reorganize aging memory files for clarity. Spawns an agent that merges "+
-				"duplicates, splits large files, and ensures clear frontmatter descriptions.",
+			"Reorganize aging memory files for clarity and efficiency. Spawns a sub-agent that "+
+				"reviews the entire memory store, merges small related files, splits overly large ones, "+
+				"ensures every file has a descriptive YAML frontmatter header, and pins critical reference "+
+				"material to system/. Target: 15-25 focused files in logical directories.",
 		),
 	)
 	h.server.AddTool(memDefrag, handleMemoryDefrag(mgr, h.brainClient, h.repoPath, h.instanceID))
@@ -351,9 +535,10 @@ func (h *HivemindMCPServer) registerTier2Tools() {
 func (h *HivemindMCPServer) registerTier3Tools() {
 	createInstance := gomcp.NewTool("create_instance",
 		gomcp.WithDescription(
-			"Spawn a new agent instance in Hivemind. The new agent will start in the same "+
-				"repository with its own worktree. Use this to delegate subtasks or create "+
-				"specialized agents (reviewers, testers, etc.).",
+			"Spawn a new agent instance in Hivemind. The new agent starts in the same repository "+
+				"with its own git worktree and tmux session. Use this to delegate independent subtasks "+
+				"or create specialized agents (reviewers, testers, architects). "+
+				"The sub-agent has no context from your conversation — provide a clear, self-contained prompt.",
 		),
 		gomcp.WithString("title",
 			gomcp.Required(),
@@ -423,9 +608,10 @@ func (h *HivemindMCPServer) registerTier3Tools() {
 
 	defineWorkflow := gomcp.NewTool("define_workflow",
 		gomcp.WithDescription(
-			"Define a workflow DAG: a set of tasks with dependencies. Tasks whose dependencies "+
-				"are already satisfied will be triggered immediately (spawning new agent instances). "+
-				"Use complete_task to mark tasks as done, which triggers dependent tasks.",
+			"Define a workflow as a directed acyclic graph (DAG) of tasks with dependencies. "+
+				"Tasks whose dependencies are already satisfied are triggered immediately, each spawning "+
+				"a new agent instance. When a task completes via complete_task, downstream dependents "+
+				"are automatically triggered. Use this for multi-step tasks that have a clear dependency structure.",
 		),
 		gomcp.WithString("tasks_json",
 			gomcp.Required(),

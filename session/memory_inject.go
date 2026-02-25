@@ -80,7 +80,7 @@ func buildMemorySection(tree []memory.TreeEntry, systemFiles map[string]string, 
 	b.WriteString("- **Before answering** any question about the user's preferences, setup, past decisions, or active projects: call `memory_search` first.\n")
 	b.WriteString("- **After completing any significant task** (implementing a feature, fixing a bug, making an architectural decision): call `memory_write` immediately. Do not wait to be asked.\n")
 	b.WriteString("- **At the end of every working session**: call `memory_write` to record what was built, decisions made, and any user preferences observed. This is mandatory.\n")
-	b.WriteString("- Write **stable facts** (hardware, OS, global preferences) with `scope=\"global\"` — this writes to `system/global.md` which is always in agent context. Write **project decisions** with `scope=\"repo\"` (dated files default to repo).\n")
+	b.WriteString("- Write **stable facts** (hardware, OS, global preferences) to `global.md` using `scope=\"global\"`. Write **project decisions** with `scope=\"repo\"` (default for dated files).\n")
 	b.WriteString("- **When asked to write memory**: Do it immediately without asking for confirmation. Call memory_write with a concise summary of: (1) what was built/changed, (2) key decisions made, (3) any user preferences expressed.\n\n")
 
 	b.WriteString("### What is worth writing to memory\n\n")
@@ -95,16 +95,8 @@ func buildMemorySection(tree []memory.TreeEntry, systemFiles map[string]string, 
 	b.WriteString("|------|-------------|\n")
 	b.WriteString("| `memory_search(query)` | Start of session, before answering questions about prior context |\n")
 	b.WriteString("| `memory_write(content, file?, scope?)` | scope=\"repo\" for this project's decisions; scope=\"global\" for user preferences/hardware |\n")
-	b.WriteString("| `memory_read(path)` | Read full file body (frontmatter stripped) |\n")
-	b.WriteString("| `memory_append(path, content)` | Append content to an existing memory file |\n")
 	b.WriteString("| `memory_get(path, from?, lines?)` | Read specific lines from a memory file |\n")
-	b.WriteString("| `memory_list()` | Browse all memory files |\n")
-	b.WriteString("| `memory_tree()` | View memory file tree with descriptions |\n")
-	b.WriteString("| `memory_move(from, to)` | Rename or reorganize a memory file |\n")
-	b.WriteString("| `memory_delete(path)` | Remove a memory file |\n")
-	b.WriteString("| `memory_pin(path)` | Move file to system/ (always-in-context) |\n")
-	b.WriteString("| `memory_unpin(path)` | Move file out of system/ |\n")
-	b.WriteString("| `memory_history(path?, count?)` | View git history of memory changes |\n\n")
+	b.WriteString("| `memory_list()` | Browse all memory files |\n\n")
 
 	// Memory tree.
 	if len(tree) > 0 {

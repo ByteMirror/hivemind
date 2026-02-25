@@ -362,10 +362,10 @@ func (r *InstanceRenderer) Render(i *session.Instance, selected bool, focused bo
 func (l *List) String() string {
 	const autoYesText = " auto-yes "
 
-	var b strings.Builder
-	b.WriteString("\n")
+	// Build header content.
+	var header strings.Builder
+	header.WriteString("\n")
 
-	// Write filter tabs
 	titleWidth := l.width
 
 	allTab := inactiveFilterTab
@@ -390,7 +390,7 @@ func (l *List) String() string {
 		if gap < 1 {
 			gap = 1
 		}
-		b.WriteString(left + strings.Repeat(" ", gap) + right)
+		header.WriteString(left + strings.Repeat(" ", gap) + right)
 	} else {
 		left := tabs + " " + sortLabel
 		autoYes := autoYesStyle.Render(autoYesText)
@@ -398,23 +398,25 @@ func (l *List) String() string {
 		if gap < 1 {
 			gap = 1
 		}
-		b.WriteString(left + strings.Repeat(" ", gap) + autoYes)
+		header.WriteString(left + strings.Repeat(" ", gap) + autoYes)
 	}
 
-	b.WriteString("\n")
-	b.WriteString("\n")
+	header.WriteString("\n")
+	header.WriteString("\n")
 
-	// Render the Review Queue section (automation instances awaiting review).
 	selectedTitle := ""
 	if sel := l.GetSelectedInstance(); sel != nil {
 		selectedTitle = sel.Title
 	}
 	if reviewSection := RenderReviewSection(l.allItems, selectedTitle, l.width); reviewSection != "" {
-		b.WriteString(reviewSection)
-		b.WriteString("\n")
+		header.WriteString(reviewSection)
+		header.WriteString("\n")
 	}
 
-	// Render the list.
+	headerStr := header.String()
+
+	// Build all items content.
+	var items strings.Builder
 	for i, item := range l.items {
 		var opts []renderOpt
 		if l.expanded[item.Title] || l.childExpanded[item.Title] {
@@ -424,12 +426,82 @@ func (l *List) String() string {
 			isLastChild := (i == len(l.items)-1) || l.items[i+1].ParentTitle != item.ParentTitle
 			opts = append(opts, renderOpt{isChild: true, isLast: isLastChild})
 		}
-		b.WriteString(l.renderer.Render(item, i == l.selectedIdx, l.focused, len(l.repos) > 1, i, opts...))
+		items.WriteString(l.renderer.Render(item, i == l.selectedIdx, l.focused, len(l.repos) > 1, i, opts...))
 		if i != len(l.items)-1 {
-			b.WriteString("\n\n")
+			items.WriteString("\n\n")
 		}
 	}
-	return lipgloss.Place(l.width, l.height, lipgloss.Left, lipgloss.Top, b.String())
+
+	itemsStr := items.String()
+
+	// Apply scroll windowing to item lines.
+	visibleItemH := l.visibleItemRows()
+
+	var content string
+	if len(l.items) == 0 {
+		content = headerStr
+	} else {
+		itemLines := strings.Split(itemsStr, "\n")
+		totalItemH := len(itemLines)
+
+		// Compute effective scroll offset without mutating state (View is read-only).
+		maxOff := max(0, totalItemH-visibleItemH)
+		offset := min(max(l.scrollOffset, 0), maxOff)
+
+		if totalItemH > visibleItemH && visibleItemH > 0 {
+			end := min(offset+visibleItemH, totalItemH)
+			content = headerStr + strings.Join(itemLines[offset:end], "\n")
+		} else {
+			content = headerStr + itemsStr
+		}
+	}
+
+	placed := lipgloss.Place(l.width, l.height, lipgloss.Left, lipgloss.Top, content)
+
+	// Build scrollbar column.
+	scrollbar := l.buildScrollbar()
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, placed, scrollbar)
+}
+
+// buildScrollbar renders a 1-character-wide scrollbar column.
+// Shows a thumb indicator when content overflows; otherwise blank.
+func (l *List) buildScrollbar() string {
+	totalH := l.totalItemRows()
+	visibleH := l.visibleItemRows()
+	hdrH := l.HeaderHeight()
+	trackHeight := l.height - hdrH
+
+	lines := make([]string, 0, l.height)
+
+	// Header area: blank.
+	for range min(hdrH, l.height) {
+		lines = append(lines, " ")
+	}
+
+	// Only render the thumb when content actually overflows.
+	if trackHeight > 0 && totalH > visibleH {
+		thumbSize := max(1, trackHeight*visibleH/totalH)
+
+		maxOffset := totalH - visibleH
+		thumbPos := l.scrollOffset * (trackHeight - thumbSize) / maxOffset
+		thumbPos = min(max(thumbPos, 0), trackHeight-thumbSize)
+
+		for i := range trackHeight {
+			if i >= thumbPos && i < thumbPos+thumbSize {
+				lines = append(lines, scrollThumbStyle.Render("┃"))
+			} else {
+				lines = append(lines, " ")
+			}
+		}
+	}
+
+	// Pad remaining lines to fill the full height.
+	for len(lines) < l.height {
+		lines = append(lines, " ")
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // itemHeight returns the rendered row count for an instance entry.
@@ -452,9 +524,11 @@ func (l *List) itemHeight(idx int) int {
 	return base
 }
 
-// GetItemAtRow maps a row offset (relative to the first item) to an item index.
+// GetItemAtRow maps a visible row offset (relative to the first item in the
+// viewport) to an item index, accounting for the current scroll position.
 // Returns -1 if the row doesn't correspond to any item.
 func (l *List) GetItemAtRow(row int) int {
+	row += l.scrollOffset // convert visible row to absolute item-area row
 	currentRow := 0
 	for i := range l.items {
 		h := l.itemHeight(i)

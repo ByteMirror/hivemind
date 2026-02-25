@@ -70,10 +70,6 @@ type Instance struct {
 	// AutomationID is set when this instance was spawned by an automation.
 	// Empty for manually-created instances.
 	AutomationID string
-	// IsChat is true when this instance is a chat agent, living in ~/.hivemind/chats/<slug>/.
-	IsChat bool
-	// PersonalityDir is the absolute path to ~/.hivemind/chats/<slug>/.
-	PersonalityDir string
 	// PendingReview is true when this automation-triggered instance has finished
 	// and is waiting for the user to review its diff.
 	PendingReview bool
@@ -155,8 +151,6 @@ func (i *Instance) ToInstanceData() InstanceData {
 		Role:            i.Role,
 		ParentTitle:     i.ParentTitle,
 		AutomationID:    i.AutomationID,
-		IsChat:          i.IsChat,
-		PersonalityDir:  i.PersonalityDir,
 		PendingReview:   i.PendingReview,
 		CompletedAt:     i.CompletedAt,
 	}
@@ -202,8 +196,6 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 		Role:            data.Role,
 		ParentTitle:     data.ParentTitle,
 		AutomationID:    data.AutomationID,
-		IsChat:          data.IsChat,
-		PersonalityDir:  data.PersonalityDir,
 		PendingReview:   data.PendingReview,
 		CompletedAt:     data.CompletedAt,
 		gitWorktree: git.NewGitWorktreeFromStorage(
@@ -220,13 +212,7 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 		},
 	}
 
-	if instance.IsChat {
-		// Chat agents have no persistent tmux session. Show them as paused on
-		// reload; the user can resume them to start a fresh session.
-		// Mark started=true so they survive future SaveInstances() calls.
-		instance.Status = Paused
-		instance.started.Store(true)
-	} else if instance.Paused() {
+	if instance.Paused() {
 		instance.tmuxSession = tmux.NewTmuxSession(instance.Title, instance.Program, instance.SkipPermissions)
 		instance.started.Store(true)
 	} else {
@@ -258,10 +244,6 @@ type InstanceOptions struct {
 	ParentTitle string
 	// AutomationID links this instance to the automation that spawned it.
 	AutomationID string
-	// IsChat marks this instance as a chat agent, living in ~/.hivemind/chats/<slug>/.
-	IsChat bool
-	// PersonalityDir is the absolute path to ~/.hivemind/chats/<slug>/.
-	PersonalityDir string
 	// SetupScript is an optional shell command to run before the agent starts.
 	// It runs in the instance's worktree directory.
 	SetupScript string
@@ -291,8 +273,6 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		Role:            opts.Role,
 		ParentTitle:     opts.ParentTitle,
 		AutomationID:    opts.AutomationID,
-		IsChat:          opts.IsChat,
-		PersonalityDir:  opts.PersonalityDir,
 		SetupScript:     opts.SetupScript,
 	}, nil
 }
@@ -302,7 +282,7 @@ func (i *Instance) RepoName() (string, error) {
 		return "", ErrInstanceNotStarted
 	}
 	if i.gitWorktree == nil {
-		return "", nil // chat agents have no git worktree
+		return "", nil
 	}
 	return i.gitWorktree.GetRepoName(), nil
 }

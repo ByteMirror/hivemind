@@ -19,8 +19,6 @@ const (
 	MethodDefineWorkflow = "define_workflow"
 	MethodCompleteTask   = "complete_task"
 	MethodGetWorkflow    = "get_workflow"
-	MethodOnboardingComplete = "onboarding_complete"
-
 	// Event subscription methods.
 	MethodSubscribe   = "subscribe"
 	MethodPollEvents  = "poll_events"
@@ -81,7 +79,6 @@ const (
 	ActionPauseInstance  ActionType = "pause_instance"
 	ActionResumeInstance ActionType = "resume_instance"
 	ActionKillInstance   ActionType = "kill_instance"
-	ActionOnboardingComplete ActionType = "onboarding_complete"
 )
 
 // ActionRequest is sent from the brain server to the TUI via a channel.

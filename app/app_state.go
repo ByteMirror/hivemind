@@ -63,25 +63,22 @@ func accumulateInstanceStats(instances []*session.Instance) (countByTopic map[st
 }
 
 func (m *home) updateSidebarItemsSingleRepo() {
-	// Chat tab has no code topics — show only ungrouped chat agents.
-	if m.sidebarTab == sidebarTabChat {
-		_, _, topicStatuses := accumulateInstanceStats(m.list.GetInstances())
-		m.sidebar.SetItems(nil, nil, len(m.list.GetInstances()), nil, nil, topicStatuses)
-		return
-	}
 	topicNames, sharedTopics, autoYesTopics := topicMeta(m.topics)
 	countByTopic, ungroupedCount, topicStatuses := accumulateInstanceStats(m.list.GetInstances())
-	m.sidebar.SetItems(topicNames, countByTopic, ungroupedCount, sharedTopics, autoYesTopics, topicStatuses)
+
+	// Count automation-spawned instances for the sidebar entry.
+	autoInstanceCount := 0
+	for _, inst := range m.allInstances {
+		if inst.AutomationID != "" {
+			autoInstanceCount++
+		}
+	}
+	hasAutomations := len(m.automations) > 0
+
+	m.sidebar.SetItemsWithAutomations(topicNames, countByTopic, ungroupedCount, sharedTopics, autoYesTopics, topicStatuses, autoInstanceCount, hasAutomations)
 }
 
 func (m *home) updateSidebarItemsMultiRepo() {
-	// Chat tab in multi-repo mode: no repo groups or code topics, just ungrouped chat agents.
-	if m.sidebarTab == sidebarTabChat {
-		_, _, topicStatuses := accumulateInstanceStats(m.list.GetInstances())
-		m.sidebar.SetItems(nil, nil, len(m.list.GetInstances()), nil, nil, topicStatuses)
-		return
-	}
-
 	allInstances := m.list.GetInstances()
 	groups := make([]ui.RepoGroup, 0, len(m.activeRepoPaths))
 
@@ -618,21 +615,26 @@ func (m *home) rebuildInstanceList() {
 }
 
 // getKnownRepos returns distinct repo paths from allInstances, recent repos, plus activeRepoPaths.
+// Worktree paths are filtered out.
 func (m *home) getKnownRepos() []string {
 	seen := make(map[string]bool)
 	for _, rp := range m.activeRepoPaths {
-		seen[rp] = true
+		if !config.IsWorktreePath(rp) {
+			seen[rp] = true
+		}
 	}
 	for _, inst := range m.allInstances {
 		rp := inst.GetRepoPath()
-		if rp != "" {
+		if rp != "" && !config.IsWorktreePath(rp) {
 			seen[rp] = true
 		}
 	}
 	// Include recent repos from persisted state
 	if state, ok := m.appState.(*config.State); ok {
 		for _, rp := range state.GetRecentRepos() {
-			seen[rp] = true
+			if !config.IsWorktreePath(rp) {
+				seen[rp] = true
+			}
 		}
 	}
 	repos := make([]string, 0, len(seen))
@@ -807,12 +809,6 @@ func (m *home) instanceChanged() tea.Cmd {
 	}
 
 	m.tabbedWindow.SetInstance(selected)
-	// Update chat mode: hide Diff/Git tabs for chat agents
-	if selected != nil {
-		m.tabbedWindow.SetChatMode(selected.IsChat)
-	} else {
-		m.tabbedWindow.SetChatMode(false)
-	}
 	m.tabbedWindow.MarkContentStale()
 	// Invalidate any in-flight async preview fetch so stale content isn't applied
 	m.previewGeneration++

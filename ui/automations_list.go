@@ -7,6 +7,23 @@ import (
 
 	"github.com/ByteMirror/hivemind/config"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
+)
+
+// Column widths for the automations table (visual terminal columns).
+const (
+	autoColMark     = 2
+	autoColName     = 27
+	autoColSchedule = 16
+	autoColNextRun  = 12
+	autoColStatus   = 8
+	autoColSep      = 2
+
+	// Total table width: mark + name + sep + schedule + sep + nextRun + sep + status
+	autoTableWidth = autoColMark + autoColName + autoColSep + autoColSchedule + autoColSep + autoColNextRun + autoColSep + autoColStatus // 71
+
+	// AutomationsListWidth is the outer rendered width of the modal (table + padding + border).
+	AutomationsListWidth = autoTableWidth + 4 + 2 // 77  (padding=2*2, border=2*1)
 )
 
 var (
@@ -44,22 +61,37 @@ var (
 				Foreground(lipgloss.Color("#444444"))
 )
 
-// RenderAutomationsList renders the automations manager as a large modal.
+// colSlot renders s into exactly width terminal columns, truncating or padding as needed.
+func colSlot(s string, width int) string {
+	return runewidth.FillRight(runewidth.Truncate(s, width, "…"), width)
+}
+
+// RenderAutomationsList renders the automations manager as a modal.
 // When form is non-nil the create/edit form is shown instead of the list.
 func RenderAutomationsList(automations []*config.Automation, selectedIdx int, width int, height int, form *AutomationForm) string {
-	borderFrame := autoBorderStyle.GetHorizontalFrameSize()
+	// Width calculation:
+	//   lipgloss Width(n) sets the space BETWEEN borders (includes padding, excludes border chars).
+	//   borderChars = left border + right border (1+1 = 2 for rounded)
+	//   hPad        = total horizontal frame - borderChars (padding only)
+	//   styleWidth  = width - borderChars  → value to pass to .Width()
+	//   textWidth   = styleWidth - hPad    → actual text content area
+	borderChars := autoBorderStyle.GetBorderLeftSize() + autoBorderStyle.GetBorderRightSize()
+	hPad := autoBorderStyle.GetHorizontalFrameSize() - borderChars
+	styleWidth := width - borderChars
+	textWidth := styleWidth - hPad
+
 	vertFrame := autoBorderStyle.GetVerticalFrameSize()
-	innerWidth := width - borderFrame
 	innerHeight := height - vertFrame
-	if innerWidth < 20 {
-		innerWidth = 20
+	if textWidth < 20 {
+		textWidth = 20
+		styleWidth = textWidth + hPad
 	}
 	if innerHeight < 5 {
 		innerHeight = 5
 	}
 
 	if form != nil {
-		content := form.Render(innerWidth, innerHeight)
+		content := form.Render(textWidth, innerHeight)
 		// Hard clamp: lipgloss Height() is a minimum, not a maximum.
 		// Truncate the content to innerHeight lines so it never overflows the border.
 		lines := strings.Split(content, "\n")
@@ -67,49 +99,49 @@ func RenderAutomationsList(automations []*config.Automation, selectedIdx int, wi
 			lines = lines[:innerHeight]
 			content = strings.Join(lines, "\n")
 		}
-		return autoBorderStyle.Width(innerWidth).Height(innerHeight).Render(content)
+		return autoBorderStyle.Width(styleWidth).Height(innerHeight).Render(content)
 	}
 
-	return renderList(automations, selectedIdx, innerWidth, innerHeight)
+	return renderList(automations, selectedIdx, textWidth, innerHeight, styleWidth)
 }
 
-func renderList(automations []*config.Automation, selectedIdx int, innerWidth, innerHeight int) string {
+func renderList(automations []*config.Automation, selectedIdx int, textWidth, innerHeight, styleWidth int) string {
 	var sb strings.Builder
 
 	// Header
 	sb.WriteString(autoHeaderStyle.Render("⚡ Automations") + "\n")
 	sb.WriteString(autoHintStyle.Render("n new  e edit  t toggle  r run now  d delete  esc close") + "\n")
-	sb.WriteString(autoDividerStyle.Render(strings.Repeat("─", innerWidth)) + "\n\n")
+	sb.WriteString(autoDividerStyle.Render(strings.Repeat("─", textWidth)) + "\n\n")
 
 	if len(automations) == 0 {
-		empty := autoDisabledStyle.Render("No automations yet. Press 'n' to create one.\n\nAutomations let you schedule recurring agent tasks — e.g. run a daily\ncode review, sync documentation, or monitor for regressions.")
+		empty := autoDisabledStyle.Render(wrapWords("No automations yet. Press 'n' to create one. Automations let you schedule recurring agent tasks — e.g. run a daily code review, sync documentation, or monitor for regressions.", textWidth))
 		sb.WriteString(empty)
 	} else {
-		col := renderColumnHeader(innerWidth)
+		col := renderColumnHeader()
 		sb.WriteString(col + "\n")
-		sb.WriteString(autoDividerStyle.Render(strings.Repeat("─", innerWidth)) + "\n")
+		sb.WriteString(autoDividerStyle.Render(strings.Repeat("─", textWidth)) + "\n")
 
 		for i, auto := range automations {
-			row := renderAutomationRow(auto, i == selectedIdx, innerWidth)
+			row := renderAutomationRow(auto, i == selectedIdx, textWidth)
 			sb.WriteString(row + "\n")
 		}
 	}
 
-	return autoBorderStyle.Width(innerWidth).Height(innerHeight).Render(sb.String())
+	return autoBorderStyle.Width(styleWidth).Height(innerHeight).Render(sb.String())
 }
 
-func renderColumnHeader(width int) string {
-	name := fmt.Sprintf("%-28s", "NAME")
-	schedule := fmt.Sprintf("%-16s", "SCHEDULE")
-	nextRun := fmt.Sprintf("%-12s", "NEXT RUN")
-	status := "STATUS"
-	row := fmt.Sprintf("  %s  %s  %s  %s", name, schedule, nextRun, status)
-	_ = width
+func renderColumnHeader() string {
+	mark := colSlot("", autoColMark)
+	name := colSlot("NAME", autoColName)
+	schedule := colSlot("SCHEDULE", autoColSchedule)
+	nextRun := colSlot("NEXT RUN", autoColNextRun)
+	status := colSlot("STATUS", autoColStatus)
+	row := mark + name + "  " + schedule + "  " + nextRun + "  " + status
 	return autoColumnHeaderStyle.Render(row)
 }
 
-// renderAutomationRow renders a single automation row.
-func renderAutomationRow(auto *config.Automation, selected bool, width int) string {
+// renderAutomationRow renders a single automation row using slot-based columns.
+func renderAutomationRow(auto *config.Automation, selected bool, textWidth int) string {
 	enabledMark := "●"
 	rowStyle := autoNormalStyle
 	if !auto.Enabled {
@@ -120,37 +152,32 @@ func renderAutomationRow(auto *config.Automation, selected bool, width int) stri
 		rowStyle = autoSelectedStyle
 	}
 
-	nextRunStr := formatNextRun(auto.NextRun)
+	mark := colSlot(enabledMark, autoColMark)
+	name := colSlot(auto.Name, autoColName)
+	schedule := colSlot(auto.Schedule, autoColSchedule)
+	nextRun := colSlot(formatNextRun(auto.NextRun), autoColNextRun)
+	status := colSlot(enabledTextPlain(auto.Enabled), autoColStatus)
 
-	name := auto.Name
-	if len(name) > 26 {
-		name = name[:25] + "…"
-	}
-	schedule := auto.Schedule
-	if len(schedule) > 14 {
-		schedule = schedule[:13] + "…"
-	}
-
-	row := fmt.Sprintf("  %s %-27s  %-16s  %-12s  %s",
-		enabledMark, name, schedule, nextRunStr,
-		enabledText(auto.Enabled))
+	row := mark + name + "  " + schedule + "  " + nextRun + "  " + status
 
 	if selected {
-		// Pad to full width so the highlight bar spans the row
-		visLen := len([]rune(row))
-		if visLen < width {
-			row += strings.Repeat(" ", width-visLen)
+		// Pad to full textWidth so the highlight bar spans the row
+		visLen := runewidth.StringWidth(row)
+		if visLen < textWidth {
+			row += strings.Repeat(" ", textWidth-visLen)
 		}
 	}
 
 	return rowStyle.Render(row)
 }
 
-func enabledText(enabled bool) string {
+// enabledTextPlain returns a plain string (no ANSI) for the status column.
+// Colour is applied by the row style instead, so it doesn't break the highlight background.
+func enabledTextPlain(enabled bool) string {
 	if enabled {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e")).Render("enabled")
+		return "enabled"
 	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Render("disabled")
+	return "disabled"
 }
 
 // formatNextRun formats the NextRun time into a human-readable relative string.
@@ -173,4 +200,24 @@ func formatNextRun(t time.Time) string {
 	}
 	days := int(d.Hours()) / 24
 	return fmt.Sprintf("%dd", days)
+}
+
+// wrapWords wraps text to maxWidth using terminal-aware width measurement.
+func wrapWords(text string, maxWidth int) string {
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return ""
+	}
+	var lines []string
+	line := words[0]
+	for _, w := range words[1:] {
+		if runewidth.StringWidth(line)+1+runewidth.StringWidth(w) > maxWidth {
+			lines = append(lines, line)
+			line = w
+		} else {
+			line += " " + w
+		}
+	}
+	lines = append(lines, line)
+	return strings.Join(lines, "\n")
 }

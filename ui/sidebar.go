@@ -50,8 +50,9 @@ var searchActiveBarStyle = lipgloss.NewStyle().
 	Padding(0, 1)
 
 const (
-	SidebarAll       = "__all__"
-	SidebarUngrouped = "__ungrouped__"
+	SidebarAll          = "__all__"
+	SidebarUngrouped    = "__ungrouped__"
+	SidebarAutomations  = "__automations__"
 )
 
 // dimmedTopicStyle is for topics with no matching instances during search
@@ -91,8 +92,6 @@ type Sidebar struct {
 
 	searchActive bool
 	searchQuery  string
-
-	activeTab   int    // 0 = Code, 1 = Chat
 
 	repoName    string // current repo name shown at bottom
 	repoHovered bool   // true when mouse is hovering over the repo button
@@ -177,6 +176,64 @@ func (s *Sidebar) SetItems(topicNames []string, instanceCountByTopic map[string]
 
 	items := []SidebarItem{
 		{Name: "All", ID: SidebarAll, Count: totalCount, HasRunning: anyRunning, HasNotification: anyNotification},
+	}
+
+	for _, name := range topicNames {
+		count := instanceCountByTopic[name]
+		st := topicStatuses[name]
+		items = append(items, SidebarItem{
+			Name: name, ID: name, Count: count,
+			SharedWorktree: sharedTopics[name],
+			AutoYes:        autoYesTopics[name],
+			HasRunning:     st.HasRunning, HasNotification: st.HasNotification,
+		})
+	}
+
+	if ungroupedCount > 0 {
+		ungroupedSt := topicStatuses[""]
+		items = append(items, SidebarItem{
+			Name: "Ungrouped", ID: SidebarUngrouped, Count: ungroupedCount,
+			HasRunning: ungroupedSt.HasRunning, HasNotification: ungroupedSt.HasNotification,
+		})
+	}
+
+	s.applyItems(items)
+}
+
+// SetItemsWithAutomations is like SetItems but also inserts an Automations sidebar entry
+// and a repo name section header above the topics.
+func (s *Sidebar) SetItemsWithAutomations(topicNames []string, instanceCountByTopic map[string]int, ungroupedCount int, sharedTopics map[string]bool, autoYesTopics map[string]bool, topicStatuses map[string]TopicStatus, automationInstanceCount int, hasAutomations bool) {
+	totalCount := ungroupedCount
+	for _, c := range instanceCountByTopic {
+		totalCount += c
+	}
+
+	// Aggregate statuses for "All"
+	anyRunning := false
+	anyNotification := false
+	for _, st := range topicStatuses {
+		if st.HasRunning {
+			anyRunning = true
+		}
+		if st.HasNotification {
+			anyNotification = true
+		}
+	}
+
+	items := []SidebarItem{
+		{Name: "All", ID: SidebarAll, Count: totalCount, HasRunning: anyRunning, HasNotification: anyNotification},
+	}
+
+	// Automations entry — always show if automations are defined.
+	if hasAutomations {
+		items = append(items, SidebarItem{
+			Name: "Automations", ID: SidebarAutomations, Count: automationInstanceCount,
+		})
+	}
+
+	// Repo name section header above topics.
+	if s.repoName != "" && (len(topicNames) > 0 || ungroupedCount > 0) {
+		items = append(items, SidebarItem{Name: s.repoName, IsSection: true})
 	}
 
 	for _, name := range topicNames {
@@ -414,12 +471,6 @@ func (s *Sidebar) IsSearchActive() bool    { return s.searchActive }
 func (s *Sidebar) GetSearchQuery() string  { return s.searchQuery }
 func (s *Sidebar) SetSearchQuery(q string) { s.searchQuery = q }
 
-// SetTab sets the active sidebar tab (0 = Code, 1 = Chat).
-func (s *Sidebar) SetTab(tab int) { s.activeTab = tab }
-
-// ActiveTab returns the index of the currently active sidebar tab.
-func (s *Sidebar) ActiveTab() int { return s.activeTab }
-
 func (s *Sidebar) String() string {
 	borderStyle := sidebarBorderStyle
 	if s.focused {
@@ -453,27 +504,6 @@ func (s *Sidebar) String() string {
 		b.WriteString(searchActiveBarStyle.Width(searchWidth).Render(searchText))
 	} else {
 		b.WriteString(searchBarStyle.Width(searchWidth).Render("\uf002 search"))
-	}
-	b.WriteString("\n")
-
-	// Tab bar: Code / Chat
-	{
-		tabCodeLabel := "  Code  "
-		tabChatLabel := "  Chat  "
-		var activeTabStyle = lipgloss.NewStyle().
-			Underline(true).
-			Foreground(lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#ffffff"})
-		var inactiveTabStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "#888888", Dark: "#666666"})
-		var codeTab, chatTab string
-		if s.activeTab == 0 {
-			codeTab = activeTabStyle.Render(tabCodeLabel)
-			chatTab = inactiveTabStyle.Render(tabChatLabel)
-		} else {
-			codeTab = inactiveTabStyle.Render(tabCodeLabel)
-			chatTab = activeTabStyle.Render(tabChatLabel)
-		}
-		b.WriteString(codeTab + chatTab)
 	}
 	b.WriteString("\n\n")
 

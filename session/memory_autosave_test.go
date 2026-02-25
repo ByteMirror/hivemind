@@ -37,8 +37,8 @@ func TestSendMemoryAutoWritePrompt_NoopWhenPaused(t *testing.T) {
 	// Set a real memory manager via SetMemoryManager.
 	mgr, dir := newTestMemoryManager(t)
 	_ = dir
-	SetMemoryManager(mgr, 5)
-	defer SetMemoryManager(nil, 0)
+	SetMemoryManager(mgr, 5, 0)
+	defer SetMemoryManager(nil, 0, 0)
 
 	inst := &Instance{
 		Title:  "test-instance",
@@ -57,8 +57,8 @@ func TestSendMemoryAutoWritePrompt_NoopWhenPaused(t *testing.T) {
 func TestSendMemoryAutoWritePrompt_NoopWhenNotStarted(t *testing.T) {
 	mgr, dir := newTestMemoryManager(t)
 	_ = dir
-	SetMemoryManager(mgr, 5)
-	defer SetMemoryManager(nil, 0)
+	SetMemoryManager(mgr, 5, 0)
+	defer SetMemoryManager(nil, 0, 0)
 
 	inst := &Instance{
 		Title: "test-instance",

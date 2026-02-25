@@ -1,10 +1,31 @@
 package session
 
 import (
+	"sync"
 	"time"
 
 	"github.com/ByteMirror/hivemind/log"
 )
+
+// closeWg tracks in-flight Kill() calls so the TUI can wait for them to
+// finish before exiting (e.g. letting the memory autosave sleep complete).
+var closeWg sync.WaitGroup
+
+// WaitForAllClosing blocks until all in-flight Kill() calls finish or the
+// timeout elapses. Called from the TUI quit handler to avoid exiting while
+// instances are still shutting down.
+func WaitForAllClosing(timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		closeWg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		log.WarningLog.Printf("WaitForAllClosing: timed out after %v", timeout)
+	}
+}
 
 const (
 	// memoryAutoWriteKillWait is the time we wait between sending the prompt

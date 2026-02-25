@@ -142,6 +142,9 @@ const roleIconFallback = "\uf007" //  (user)
 var roleIconStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.AdaptiveColor{Light: "#7EC8D8", Dark: "#7EC8D8"})
 
+var scrollThumbStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.AdaptiveColor{Light: "#c0c0c0", Dark: "#555555"})
+
 // Child instance styles for brain-spawned sub-agent rows.
 var childTitleStyle = lipgloss.NewStyle().
 	Padding(1, 1, 0, 1).

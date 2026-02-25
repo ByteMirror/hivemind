@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/ByteMirror/hivemind/config"
@@ -24,7 +23,7 @@ func (m *home) handleMenuHighlighting(msg tea.KeyMsg) (cmd tea.Cmd, returnEarly 
 		m.keySent = false
 		return nil, false
 	}
-	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateNewTopic || m.state == stateNewTopicConfirm || m.state == stateSearch || m.state == stateMoveTo || m.state == stateContextMenu || m.state == statePRTitle || m.state == statePRBody || m.state == stateRenameInstance || m.state == stateRenameTopic || m.state == stateSendPrompt || m.state == stateFocusAgent || m.state == stateRepoSwitch || m.state == stateNewTopicRepo || m.state == stateCommandPalette || m.state == stateSettings || m.state == stateSkillPicker || m.state == stateInlineComment || m.state == stateAutomations || m.state == stateNewAutomation || m.state == stateMemoryBrowser || m.state == stateNewChatAgent || m.state == stateOnboarding {
+	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateNewTopic || m.state == stateNewTopicConfirm || m.state == stateSearch || m.state == stateMoveTo || m.state == stateContextMenu || m.state == statePRTitle || m.state == statePRBody || m.state == stateRenameInstance || m.state == stateRenameTopic || m.state == stateSendPrompt || m.state == stateFocusAgent || m.state == stateRepoSwitch || m.state == stateNewTopicRepo || m.state == stateCommandPalette || m.state == stateSettings || m.state == stateSkillPicker || m.state == stateInlineComment || m.state == stateAutomations || m.state == stateNewAutomation || m.state == stateMemoryBrowser {
 		return nil, false
 	}
 	// If it's in the global keymap, we should try to highlight it.
@@ -101,6 +100,16 @@ func (m *home) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				m.commandPalette.ScrollUp()
 			} else {
 				m.commandPalette.ScrollDown()
+			}
+			return m, nil
+		}
+		// Scroll the instance list when mouse is over it.
+		if msg.X >= m.sidebarWidth && msg.X < m.sidebarWidth+m.listWidth {
+			switch msg.Button {
+			case tea.MouseButtonWheelUp:
+				m.list.ScrollUp(3)
+			case tea.MouseButtonWheelDown:
+				m.list.ScrollDown(3)
 			}
 			return m, nil
 		}
@@ -202,8 +211,8 @@ func (m *home) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m, m.instanceChanged()
 		}
 
-		// Instance list items start after blank line + tabs + blank line
-		listY := contentY - 3
+		// Instance list items start after the header (tabs, review queue, etc.).
+		listY := contentY - m.list.HeaderHeight()
 		if listY >= 0 {
 			itemIdx := m.list.GetItemAtRow(listY)
 			if itemIdx >= 0 {
@@ -272,7 +281,7 @@ func (m *home) handleRightClick(x, y, contentY int) (tea.Model, tea.Cmd) {
 		return m, nil
 	} else if x < m.sidebarWidth+m.listWidth {
 		// Right-click in instance list — select the item first
-		listY := contentY - 3
+		listY := contentY - m.list.HeaderHeight()
 		if listY >= 0 {
 			itemIdx := m.list.GetItemAtRow(listY)
 			if itemIdx >= 0 {
@@ -363,10 +372,6 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m.handleNewAutomationKeys(msg)
 	case stateMemoryBrowser:
 		return m.handleMemoryBrowserKeys(msg)
-	case stateNewChatAgent:
-		return m.handleNewChatAgentKeys(msg)
-	case stateOnboarding:
-		return m.handleOnboardingKeys(msg)
 	default:
 		return m.handleDefaultKeys(msg)
 	}
@@ -764,24 +769,6 @@ func (m *home) handleRenameTopicKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.state = stateDefault
 		m.menu.SetState(ui.StateDefault)
 		return m, tea.WindowSize()
-	}
-	return m, nil
-}
-
-// handleOnboardingKeys forwards keypresses to the companion's tmux session so
-// the user can interact with the companion during the first-launch ritual.
-func (m *home) handleOnboardingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	companion := m.findInstanceByTitle("companion")
-	if companion == nil || !companion.Started() {
-		// Companion not yet started — ignore keys.
-		return m, nil
-	}
-	data := keyToBytes(msg)
-	if data == nil {
-		return m, nil
-	}
-	if err := companion.SendKeys(string(data)); err != nil {
-		log.WarningLog.Printf("onboarding: failed to forward key to companion: %v", err)
 	}
 	return m, nil
 }
@@ -1258,9 +1245,6 @@ func (m *home) handleDefaultKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.promptAfterName = true
 		return m, nil
 	case keys.KeyNew:
-		if m.sidebarTab == sidebarTabChat {
-			return m.startNewChatAgent()
-		}
 		if _, errCmd := m.createNewInstance(false); errCmd != nil {
 			return m, errCmd
 		}
@@ -1561,16 +1545,6 @@ func (m *home) handleDefaultKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.state = stateDefault
 		})
 		return m, nil
-	case keys.KeySidebarCodeTab:
-		m.sidebarTab = sidebarTabCode
-		m.sidebar.SetTab(int(m.sidebarTab))
-		m.refreshListChatFilter()
-		return m, m.instanceChanged()
-	case keys.KeySidebarChatTab:
-		m.sidebarTab = sidebarTabChat
-		m.sidebar.SetTab(int(m.sidebarTab))
-		m.refreshListChatFilter()
-		return m, m.instanceChanged()
 	case keys.KeyLeft:
 		m.setFocus(0)
 		return m, nil
@@ -2191,105 +2165,3 @@ func (m *home) handleMemoryBrowserKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// slugify converts an arbitrary string into a slug suitable for use as a chat agent directory name.
-// It lowercases, replaces spaces with hyphens, and strips non-alphanumeric characters.
-func slugify(name string) string {
-	s := strings.ToLower(name)
-	s = strings.ReplaceAll(s, " ", "-")
-	var out strings.Builder
-	for _, r := range s {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
-			out.WriteRune(r)
-		}
-	}
-	result := out.String()
-	if result == "" {
-		result = "agent"
-	}
-	return result
-}
-
-// handleNewChatAgentKeys handles key events when the user is naming a new chat agent.
-func (m *home) handleNewChatAgentKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.textInputOverlay == nil {
-		m.state = stateDefault
-		return m, nil
-	}
-	shouldClose := m.textInputOverlay.HandleKeyPress(msg)
-	if shouldClose {
-		if m.textInputOverlay.IsSubmitted() {
-			name := m.textInputOverlay.GetValue()
-			m.textInputOverlay = nil
-			if name == "" {
-				m.state = stateDefault
-				return m, m.handleError(fmt.Errorf("agent name cannot be empty"))
-			}
-			return m.createChatAgent(name)
-		}
-		// Cancelled
-		m.state = stateDefault
-		m.textInputOverlay = nil
-		return m, tea.WindowSize()
-	}
-	return m, nil
-}
-
-// startNewChatAgent opens a text input overlay for the user to name a new chat agent.
-func (m *home) startNewChatAgent() (tea.Model, tea.Cmd) {
-	m.textInputOverlay = overlay.NewTextInputOverlay("New chat agent name", "")
-	m.textInputOverlay.SetSize(50, 5)
-	m.state = stateNewChatAgent
-	return m, nil
-}
-
-// createChatAgent creates and starts a new chat agent with the given display name.
-func (m *home) createChatAgent(name string) (tea.Model, tea.Cmd) {
-	slug := slugify(name)
-
-	if err := session.EnsureAgentDir(slug); err != nil {
-		m.state = stateDefault
-		return m, m.handleError(fmt.Errorf("could not create agent directory: %w", err))
-	}
-	if err := session.CopyTemplatesToAgentDir(slug); err != nil {
-		m.state = stateDefault
-		return m, m.handleError(fmt.Errorf("could not copy agent templates: %w", err))
-	}
-
-	personalityDir, err := session.GetAgentPersonalityDir(slug)
-	if err != nil {
-		m.state = stateDefault
-		return m, m.handleError(fmt.Errorf("could not get agent personality dir: %w", err))
-	}
-
-	agent, err := session.NewInstance(session.InstanceOptions{
-		Title:           name,
-		Program:         m.program,
-		IsChat:          true,
-		PersonalityDir:  personalityDir,
-		SkipPermissions: true,
-	})
-	if err != nil {
-		m.state = stateDefault
-		return m, m.handleError(fmt.Errorf("could not create chat agent: %w", err))
-	}
-
-	m.newInstanceFinalizer = m.list.AddInstance(agent)
-	m.list.SelectInstanceByRef(agent)
-	m.state = stateDefault
-
-	// Refresh the list so the new agent appears in the Chat tab.
-	m.refreshListChatFilter()
-
-	// Notify the tabbed window about the new selection so it enters chat mode
-	// and clears stale content from any previously selected instance.
-	instanceChangedCmd := m.instanceChanged()
-
-	startCmd := func() tea.Msg {
-		if err := agent.Start(true); err != nil {
-			return instanceStartedMsg{instance: agent, err: err}
-		}
-		return instanceStartedMsg{instance: agent, err: nil}
-	}
-
-	return m, tea.Batch(tea.WindowSize(), instanceChangedCmd, startCmd)
-}

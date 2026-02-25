@@ -243,13 +243,7 @@ func (i *Instance) UpdateDiffStats() error {
 		return nil
 	}
 
-	// Chat agents have no git worktree — nothing to diff.
-	if i.gitWorktree == nil {
-		i.diffStats = nil
-		return nil
-	}
-
-	if i.Status == Paused {
+	if i.gitWorktree == nil || i.Status == Paused {
 		// Keep the previous diff stats if the instance is paused
 		return nil
 	}

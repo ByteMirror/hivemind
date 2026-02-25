@@ -1,4 +1,0 @@
-- Name: (not set)
-- Creature: (not set)
-- Vibe: (not set)
-- Emoji: (not set)

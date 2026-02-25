@@ -21,10 +21,6 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 		return ErrTitleEmpty
 	}
 
-	if i.IsChat {
-		return i.startChatAgent()
-	}
-
 	if firstTimeSetup {
 		i.LoadingTotal = 8
 	} else {
@@ -100,15 +96,8 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 			}()
 		}
 
-		// Inject companion personality + IDE memory into CLAUDE.md before starting.
-		wtPath := i.gitWorktree.GetWorktreePath()
-		go func() {
-			claudeMD := filepath.Join(wtPath, "CLAUDE.md")
-			if err := InjectPersonalityContext(claudeMD); err != nil {
-				log.WarningLog.Printf("personality inject: %v", err)
-			}
-		}()
 		if memMgr := getMemoryManager(); memMgr != nil {
+			wtPath := i.gitWorktree.GetWorktreePath()
 			count := getMemoryInjectCount()
 			repoMgr, _ := GetOrCreateRepoManager(filepath.Base(wtPath))
 			go func() {
@@ -195,24 +184,15 @@ func (i *Instance) StartInSharedWorktree(worktree *git.GitWorktree, branch strin
 		}()
 	}
 
-	// Inject companion personality + IDE memory into CLAUDE.md before starting.
-	{
+	if memMgr := getMemoryManager(); memMgr != nil {
 		sharedWtPath := worktree.GetWorktreePath()
+		count := getMemoryInjectCount()
+		repoMgr, _ := GetOrCreateRepoManager(filepath.Base(sharedWtPath))
 		go func() {
-			claudeMD := filepath.Join(sharedWtPath, "CLAUDE.md")
-			if err := InjectPersonalityContext(claudeMD); err != nil {
-				log.WarningLog.Printf("personality inject: %v", err)
+			if err := InjectMemoryContext(sharedWtPath, memMgr, repoMgr, count); err != nil {
+				log.WarningLog.Printf("memory inject: %v", err)
 			}
 		}()
-		if memMgr := getMemoryManager(); memMgr != nil {
-			count := getMemoryInjectCount()
-			repoMgr, _ := GetOrCreateRepoManager(filepath.Base(sharedWtPath))
-			go func() {
-				if err := InjectMemoryContext(sharedWtPath, memMgr, repoMgr, count); err != nil {
-					log.WarningLog.Printf("memory inject: %v", err)
-				}
-			}()
-		}
 	}
 
 	if err := i.tmuxSession.Start(worktree.GetWorktreePath()); err != nil {
@@ -286,6 +266,8 @@ func (i *Instance) Kill() error {
 	if !i.started.CompareAndSwap(true, false) {
 		return nil // already being killed
 	}
+	closeWg.Add(1)
+	defer closeWg.Done()
 
 	// If memory is configured, send a final prompt asking the agent to persist
 	// session learnings before we terminate. This is fire-and-forget — if it
@@ -397,11 +379,6 @@ func (i *Instance) Resume() error {
 	// Reset the dead flag so the resumed session will be polled normally.
 	i.tmuxDead.Store(false)
 
-	// Chat agents bypass git worktree entirely — just restart the chat session.
-	if i.IsChat {
-		return i.startChatAgent()
-	}
-
 	// Main-repo instances have no worktree to set up; just restart the tmux session.
 	if i.mainRepo {
 		i.LoadingTotal = 2
@@ -452,16 +429,6 @@ func (i *Instance) Resume() error {
 		}()
 	}
 
-	// Inject companion personality + IDE memory into CLAUDE.md before resuming.
-	{
-		resumeWtPath := i.gitWorktree.GetWorktreePath()
-		go func() {
-			claudeMD := filepath.Join(resumeWtPath, "CLAUDE.md")
-			if err := InjectPersonalityContext(claudeMD); err != nil {
-				log.WarningLog.Printf("personality inject: %v", err)
-			}
-		}()
-	}
 	if memMgr := getMemoryManager(); memMgr != nil {
 		wtPath := i.gitWorktree.GetWorktreePath()
 		count := getMemoryInjectCount()
@@ -545,13 +512,6 @@ func (i *Instance) Restart() error {
 		}()
 	}
 
-	// Inject companion personality + IDE memory into CLAUDE.md before restarting.
-	go func() {
-		claudeMD := filepath.Join(worktreePath, "CLAUDE.md")
-		if err := InjectPersonalityContext(claudeMD); err != nil {
-			log.WarningLog.Printf("personality inject: %v", err)
-		}
-	}()
 	if memMgr := getMemoryManager(); memMgr != nil {
 		count := getMemoryInjectCount()
 		repoMgr, _ := GetOrCreateRepoManager(filepath.Base(worktreePath))
@@ -575,68 +535,3 @@ func (i *Instance) Restart() error {
 	return nil
 }
 
-// startChatAgent starts a chat agent instance, bypassing git worktree creation.
-// All chat agents share the companion's personality — one character across all
-// chats. The personality (SOUL.md + IDENTITY.md) is written to CLAUDE.md in
-// the agent's working directory so Claude Code picks it up as primary instructions.
-func (i *Instance) startChatAgent() error {
-	slug := filepath.Base(i.PersonalityDir)
-
-	// Inject companion personality into CLAUDE.md (same mechanism as coding agents).
-	claudeMD := filepath.Join(i.PersonalityDir, "CLAUDE.md")
-	if err := InjectPersonalityContext(claudeMD); err != nil {
-		log.WarningLog.Printf("startChatAgent: personality inject: %v", err)
-	}
-
-	// If the companion hasn't been bootstrapped yet and this IS the companion,
-	// write BOOTSTRAP.md as CLAUDE.md so the onboarding ritual can proceed.
-	companionState, _ := ReadWorkspaceState("companion")
-	if !companionState.Bootstrapped && slug == "companion" {
-		prompt, err := BuildSystemPrompt(i.PersonalityDir, ChatWorkspaceState{Bootstrapped: false}, nil, 0)
-		if err == nil && prompt != "" {
-			if err := WriteCompanionClaudeMD(i.PersonalityDir, prompt); err != nil {
-				log.WarningLog.Printf("startChatAgent: write bootstrap CLAUDE.md: %v", err)
-			}
-		}
-	}
-
-	i.LoadingTotal = 4
-	i.setLoadingProgress(1, "Preparing chat session...")
-
-	var tmuxSession *tmux.TmuxSession
-	if i.tmuxSession != nil {
-		tmuxSession = i.tmuxSession
-	} else {
-		tmuxSession = tmux.NewTmuxSession(i.Title, i.Program, i.SkipPermissions)
-	}
-	tmuxSession.ProgressFunc = func(stage int, desc string) {
-		i.setLoadingProgress(1+stage, desc)
-	}
-
-	i.tmuxSession = tmuxSession
-
-	// Kill any stale session left over from a previous (unfinished) run.
-	// This prevents the "tmux session already exists" error when restarting.
-	if i.tmuxSession.DoesSessionExist() {
-		log.WarningLog.Printf("startChatAgent: stale session %q found, killing it", i.Title)
-		_ = i.tmuxSession.Close()
-	}
-
-	// Register the Hivemind MCP server so the companion can call tools like
-	// onboarding_complete. Uses the same mechanism as regular instances.
-	if err := registerMCPServer(i.PersonalityDir, i.Path, i.Title); err != nil {
-		log.WarningLog.Printf("startChatAgent: failed to register MCP server: %v", err)
-	}
-
-	i.setLoadingProgress(2, "Starting chat session...")
-	if err := i.tmuxSession.Start(i.PersonalityDir); err != nil {
-		if cleanupErr := i.tmuxSession.Close(); cleanupErr != nil {
-			err = fmt.Errorf("%v (cleanup error: %v)", err, cleanupErr)
-		}
-		return fmt.Errorf("failed to start chat session: %w", err)
-	}
-
-	i.started.Store(true)
-	i.SetStatus(Running)
-	return nil
-}

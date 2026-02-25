@@ -27,9 +27,11 @@ type List struct {
 	filter       string       // topic name filter (empty = show all)
 	repoFilter   string       // repo path filter (empty = show all repos)
 	statusFilter StatusFilter // status filter (All or Active)
-	chatFilter   *bool       // nil = no filter, false = code only, true = chat only
 	sortMode     SortMode     // how instances are sorted
 	allItems     []*session.Instance
+
+	// scrollOffset is the row offset for scrolling the item area.
+	scrollOffset int
 
 	// expanded tracks which instances have their sub-agent tree expanded (by title).
 	expanded map[string]bool
@@ -56,13 +58,6 @@ func (l *List) SetFocused(focused bool) {
 // SetStatusFilter sets the status filter and rebuilds the filtered items.
 func (l *List) SetStatusFilter(filter StatusFilter) {
 	l.statusFilter = filter
-	l.rebuildFilteredItems()
-}
-
-// SetChatFilter restricts the visible instances by IsChat flag.
-// nil removes the filter, false shows only code agents, true shows only chat agents.
-func (l *List) SetChatFilter(isChat *bool) {
-	l.chatFilter = isChat
 	l.rebuildFilteredItems()
 }
 
@@ -120,6 +115,7 @@ func (l *List) SetSize(width, height int) {
 	l.width = width
 	l.height = height
 	l.renderer.setWidth(width)
+	l.clampScrollOffset()
 }
 
 // SetSessionPreviewSize sets the height and width for the tmux sessions. This makes the stdout line have the correct
@@ -150,6 +146,7 @@ func (l *List) Down() {
 	if l.selectedIdx < len(l.items)-1 {
 		l.selectedIdx++
 	}
+	l.ensureSelectedVisible()
 }
 
 // Kill removes and kills the currently selected instance.
@@ -238,6 +235,7 @@ func (l *List) Up() {
 	if l.selectedIdx > 0 {
 		l.selectedIdx--
 	}
+	l.ensureSelectedVisible()
 }
 
 func (l *List) addRepo(repo string) {
@@ -272,7 +270,7 @@ func (l *List) AddInstance(instance *session.Instance) (finalize func()) {
 			return
 		}
 		if repoName == "" {
-			return // chat agents have no associated repo
+			return
 		}
 		l.addRepo(repoName)
 	}
@@ -419,6 +417,7 @@ func (l *List) SetSearchFilterWithTopicAndRepo(query string, topicFilter string,
 	if l.selectedIdx < 0 {
 		l.selectedIdx = 0
 	}
+	l.ensureSelectedVisible()
 }
 
 // instanceRepoPath returns the repo path for an instance, falling back to inst.Path.
@@ -435,6 +434,7 @@ func (l *List) Clear() {
 	l.allItems = nil
 	l.items = nil
 	l.selectedIdx = 0
+	l.scrollOffset = 0
 	l.filter = ""
 	l.repoFilter = ""
 }
@@ -447,6 +447,14 @@ func (l *List) rebuildFilteredItems() {
 		topicFiltered = make([]*session.Instance, 0, len(l.allItems))
 		for _, inst := range l.allItems {
 			if l.repoFilter != "" && l.instanceRepoPath(inst) != l.repoFilter {
+				continue
+			}
+			topicFiltered = append(topicFiltered, inst)
+		}
+	} else if l.filter == SidebarAutomations {
+		topicFiltered = make([]*session.Instance, 0)
+		for _, inst := range l.allItems {
+			if inst.AutomationID == "" {
 				continue
 			}
 			topicFiltered = append(topicFiltered, inst)
@@ -492,18 +500,6 @@ func (l *List) rebuildFilteredItems() {
 		l.items = topicFiltered
 	}
 
-	// Apply chat filter (nil = show all, false = code only, true = chat only)
-	if l.chatFilter != nil {
-		wantChat := *l.chatFilter
-		chatFiltered := make([]*session.Instance, 0, len(l.items))
-		for _, inst := range l.items {
-			if inst.IsChat == wantChat {
-				chatFiltered = append(chatFiltered, inst)
-			}
-		}
-		l.items = chatFiltered
-	}
-
 	// Apply sort
 	l.sortItems()
 
@@ -516,6 +512,7 @@ func (l *List) rebuildFilteredItems() {
 	if l.selectedIdx < 0 {
 		l.selectedIdx = 0
 	}
+	l.ensureSelectedVisible()
 }
 
 func (l *List) sortItems() {
@@ -604,4 +601,95 @@ func (l *List) groupChildrenUnderParents(items []*session.Instance) []*session.I
 	}
 
 	return result
+}
+
+// HeaderHeight returns the number of rows consumed by the fixed header
+// (blank line + filter tabs + blank line + optional review section).
+func (l *List) HeaderHeight() int {
+	h := 3 // blank + tabs + blank
+	pendingCount := 0
+	for _, inst := range l.allItems {
+		if inst.PendingReview {
+			pendingCount++
+		}
+	}
+	if pendingCount > 0 {
+		h += pendingCount + 2 // review header + items + trailing blank
+	}
+	return h
+}
+
+// totalItemRows returns the total number of rendered rows for all items
+// including gap lines between them.
+func (l *List) totalItemRows() int {
+	if len(l.items) == 0 {
+		return 0
+	}
+	total := 0
+	for i := range l.items {
+		total += l.itemHeight(i)
+		if i < len(l.items)-1 {
+			total++ // blank line gap between items
+		}
+	}
+	return total
+}
+
+// visibleItemRows returns the number of rows available for displaying items
+// (total height minus header height).
+func (l *List) visibleItemRows() int {
+	return max(0, l.height-l.HeaderHeight())
+}
+
+// selectedItemRowRange returns the start and end row (exclusive) of the
+// selected item within the item area.
+func (l *List) selectedItemRowRange() (start, end int) {
+	if len(l.items) == 0 || l.selectedIdx >= len(l.items) {
+		return 0, 0
+	}
+	for i := 0; i < l.selectedIdx; i++ {
+		start += l.itemHeight(i) + 1 // +1 for gap
+	}
+	end = start + l.itemHeight(l.selectedIdx)
+	return
+}
+
+// ensureSelectedVisible adjusts scrollOffset so the selected item is fully visible.
+func (l *List) ensureSelectedVisible() {
+	if len(l.items) == 0 {
+		l.scrollOffset = 0
+		return
+	}
+
+	start, end := l.selectedItemRowRange()
+	visible := l.visibleItemRows()
+	if visible <= 0 {
+		return
+	}
+
+	if start < l.scrollOffset {
+		l.scrollOffset = start
+	}
+	if end > l.scrollOffset+visible {
+		l.scrollOffset = end - visible
+	}
+	l.clampScrollOffset()
+}
+
+// clampScrollOffset ensures scrollOffset is within valid bounds.
+func (l *List) clampScrollOffset() {
+	maxOffset := max(0, l.totalItemRows()-l.visibleItemRows())
+	l.scrollOffset = min(max(l.scrollOffset, 0), maxOffset)
+}
+
+// ScrollUp scrolls the item area up by n rows.
+func (l *List) ScrollUp(n int) {
+	l.scrollOffset -= n
+	l.clampScrollOffset()
+}
+
+// ScrollDown scrolls the item area down by n rows.
+func (l *List) ScrollDown(n int) {
+	l.scrollOffset += n
+	l.clampScrollOffset()
 }

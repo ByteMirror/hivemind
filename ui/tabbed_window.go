@@ -62,7 +62,6 @@ type TabbedWindow struct {
 	contentStale    bool   // true when navigation changed instance but content not yet fetched
 	gitContent      string // cached git pane content, set by tick when changed
 	terminalContent string // cached terminal pane content, set by tick when changed
-	chatMode        bool   // true when the selected instance is a chat agent (hides Diff/Git tabs)
 }
 
 // SetFocusMode enables or disables the focus/insert mode visual indicator.
@@ -73,15 +72,6 @@ func (w *TabbedWindow) SetFocusMode(enabled bool) {
 // IsFocusMode returns whether the window is in focus/insert mode.
 func (w *TabbedWindow) IsFocusMode() bool {
 	return w.focusMode
-}
-
-// SetChatMode hides the Diff and Git tabs when true.
-// If the current tab is Diff or Git, it resets to the Preview (Agent) tab.
-func (w *TabbedWindow) SetChatMode(isChat bool) {
-	w.chatMode = isChat
-	if isChat && (w.activeTab == DiffTab || w.activeTab == GitTab) {
-		w.activeTab = PreviewTab
-	}
 }
 
 func NewTabbedWindow(preview *PreviewPane, terminal *TerminalPane, diff *DiffPane, git *GitPane) *TabbedWindow {
@@ -153,11 +143,7 @@ func (w *TabbedWindow) GetPreviewSize() (width, height int) {
 }
 
 // visibleTabIndices returns the indices of tabs that are currently visible.
-// In chat mode, the Diff and Git tabs are hidden.
 func (w *TabbedWindow) visibleTabIndices() []int {
-	if w.chatMode {
-		return []int{PreviewTab, TerminalTab}
-	}
 	indices := make([]int, len(w.tabs))
 	for i := range indices {
 		indices[i] = i
