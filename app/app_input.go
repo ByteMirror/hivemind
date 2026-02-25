@@ -1749,52 +1749,95 @@ func mouseToSGR(msg tea.MouseMsg, x, y int) []byte {
 	return []byte(fmt.Sprintf("\x1b[<%d;%d;%d%c", button, x, y, suffix))
 }
 
+// specialKeySequences maps Bubble Tea special key types to their terminal escape sequences.
+var specialKeySequences = map[tea.KeyType]string{
+	tea.KeyUp:             "\x1b[A",
+	tea.KeyDown:           "\x1b[B",
+	tea.KeyRight:          "\x1b[C",
+	tea.KeyLeft:           "\x1b[D",
+	tea.KeyHome:           "\x1b[H",
+	tea.KeyEnd:            "\x1b[F",
+	tea.KeyPgUp:           "\x1b[5~",
+	tea.KeyPgDown:         "\x1b[6~",
+	tea.KeyDelete:         "\x1b[3~",
+	tea.KeyInsert:         "\x1b[2~",
+	tea.KeySpace:          " ",
+	tea.KeyShiftTab:       "\x1b[Z",
+	tea.KeyShiftUp:        "\x1b[1;2A",
+	tea.KeyShiftDown:      "\x1b[1;2B",
+	tea.KeyShiftRight:     "\x1b[1;2C",
+	tea.KeyShiftLeft:      "\x1b[1;2D",
+	tea.KeyShiftHome:      "\x1b[1;2H",
+	tea.KeyShiftEnd:       "\x1b[1;2F",
+	tea.KeyCtrlUp:         "\x1b[1;5A",
+	tea.KeyCtrlDown:       "\x1b[1;5B",
+	tea.KeyCtrlRight:      "\x1b[1;5C",
+	tea.KeyCtrlLeft:       "\x1b[1;5D",
+	tea.KeyCtrlHome:       "\x1b[1;5H",
+	tea.KeyCtrlEnd:        "\x1b[1;5F",
+	tea.KeyCtrlPgUp:       "\x1b[5;5~",
+	tea.KeyCtrlPgDown:     "\x1b[6;5~",
+	tea.KeyCtrlShiftUp:    "\x1b[1;6A",
+	tea.KeyCtrlShiftDown:  "\x1b[1;6B",
+	tea.KeyCtrlShiftRight: "\x1b[1;6C",
+	tea.KeyCtrlShiftLeft:  "\x1b[1;6D",
+	tea.KeyCtrlShiftHome:  "\x1b[1;6H",
+	tea.KeyCtrlShiftEnd:   "\x1b[1;6F",
+	tea.KeyF1:             "\x1bOP",
+	tea.KeyF2:             "\x1bOQ",
+	tea.KeyF3:             "\x1bOR",
+	tea.KeyF4:             "\x1bOS",
+	tea.KeyF5:             "\x1b[15~",
+	tea.KeyF6:             "\x1b[17~",
+	tea.KeyF7:             "\x1b[18~",
+	tea.KeyF8:             "\x1b[19~",
+	tea.KeyF9:             "\x1b[20~",
+	tea.KeyF10:            "\x1b[21~",
+	tea.KeyF11:            "\x1b[23~",
+	tea.KeyF12:            "\x1b[24~",
+	tea.KeyF13:            "\x1b[25~",
+	tea.KeyF14:            "\x1b[26~",
+	tea.KeyF15:            "\x1b[28~",
+	tea.KeyF16:            "\x1b[29~",
+	tea.KeyF17:            "\x1b[31~",
+	tea.KeyF18:            "\x1b[32~",
+	tea.KeyF19:            "\x1b[33~",
+	tea.KeyF20:            "\x1b[34~",
+}
+
 // keyToBytes translates a Bubble Tea key message to raw bytes for PTY forwarding.
+// Control keys (Ctrl+A..Z) map directly to ASCII 1..26. Special keys (arrows,
+// F-keys, Home/End, etc.) are converted to their standard escape sequences.
 func keyToBytes(msg tea.KeyMsg) []byte {
-	switch msg.Type {
-	case tea.KeyRunes:
-		return []byte(string(msg.Runes))
-	case tea.KeyEnter:
-		return []byte{0x0D}
-	case tea.KeyBackspace:
-		return []byte{0x7F}
-	case tea.KeyTab:
-		return []byte{0x09}
-	case tea.KeySpace:
-		return []byte{0x20}
-	case tea.KeyUp:
-		return []byte("\x1b[A")
-	case tea.KeyDown:
-		return []byte("\x1b[B")
-	case tea.KeyRight:
-		return []byte("\x1b[C")
-	case tea.KeyLeft:
-		return []byte("\x1b[D")
-	case tea.KeyCtrlC:
-		return []byte{0x03}
-	case tea.KeyCtrlD:
-		return []byte{0x04}
-	case tea.KeyCtrlA:
-		return []byte{0x01}
-	case tea.KeyCtrlE:
-		return []byte{0x05}
-	case tea.KeyCtrlL:
-		return []byte{0x0C}
-	case tea.KeyCtrlU:
-		return []byte{0x15}
-	case tea.KeyCtrlK:
-		return []byte{0x0B}
-	case tea.KeyCtrlW:
-		return []byte{0x17}
-	case tea.KeyDelete:
-		return []byte("\x1b[3~")
-	case tea.KeyEsc:
-		return []byte{0x1b}
-	case tea.KeyShiftTab:
-		return []byte("\x1b[Z")
+	var data []byte
+
+	switch {
+	case msg.Type == tea.KeyRunes:
+		data = []byte(string(msg.Runes))
+
+	// Control keys: KeyType 0-31 and 127 (DEL/Backspace) are the ASCII byte value.
+	case msg.Type >= 0 && msg.Type <= 31:
+		data = []byte{byte(msg.Type)}
+	case msg.Type == tea.KeyBackspace: // 127
+		data = []byte{0x7F}
+
+	// Special keys with escape sequences.
 	default:
+		if seq, ok := specialKeySequences[msg.Type]; ok {
+			data = []byte(seq)
+		}
+	}
+
+	if data == nil {
 		return nil
 	}
+
+	// Prepend ESC for Alt-modified keys.
+	if msg.Alt {
+		data = append([]byte{0x1b}, data...)
+	}
+
+	return data
 }
 
 // createNewInstance handles the shared logic for creating a new instance.
