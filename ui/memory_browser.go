@@ -528,6 +528,7 @@ func (b *MemoryBrowser) renderHistory() string {
 	if b.historyDiff != "" {
 		sb.WriteString("\n---\n")
 		sb.WriteString(browserDiffPreviewTitleStyle.Render("latest diff preview:\n"))
+		sb.WriteString(browserDiffLegendStyle.Render("+ additions   - deletions   @@ hunk") + "\n")
 		sb.WriteString(renderStyledDiffPreview(b.historyDiff, historyDiffPreviewMaxLines))
 	}
 	return strings.TrimSpace(sb.String())
@@ -942,14 +943,23 @@ func renderStyledDiffPreview(diff string, maxLines int) string {
 	if strings.TrimSpace(diff) == "" {
 		return ""
 	}
-	diff = truncateLines(diff, maxLines)
 	lines := strings.Split(diff, "\n")
+	hidden := 0
+	if maxLines > 0 && len(lines) > maxLines {
+		hidden = len(lines) - maxLines
+		lines = lines[:maxLines]
+	}
+
 	var sb strings.Builder
 	for i, line := range lines {
 		sb.WriteString(styleDiffLine(line))
 		if i != len(lines)-1 {
 			sb.WriteString("\n")
 		}
+	}
+	if hidden > 0 {
+		sb.WriteString("\n")
+		sb.WriteString(browserDiffTruncationStyle.Render(fmt.Sprintf("… %d more diff line(s)", hidden)))
 	}
 	return sb.String()
 }
@@ -1006,22 +1016,32 @@ var (
 					Foreground(lipgloss.Color("#8AB4F8")).
 					Bold(true)
 
+	browserDiffLegendStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#8B949E")).
+				Italic(true)
+
 	browserDiffHeaderStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#6FA8DC")).
+				Foreground(lipgloss.Color("#74C0FC")).
 				Bold(true)
 
 	browserDiffMetaStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#AAB7C4"))
 
 	browserDiffHunkStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#E6C07B")).
+				Foreground(lipgloss.Color("#F5C451")).
 				Bold(true)
 
 	browserDiffAddStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#89D185"))
+				Foreground(lipgloss.Color("#35D07F")).
+				Bold(true)
 
 	browserDiffDelStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#F28B82"))
+				Foreground(lipgloss.Color("#FF6B6B")).
+				Bold(true)
+
+	browserDiffTruncationStyle = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("#8B949E")).
+					Italic(true)
 )
 
 func (b *MemoryBrowser) renderList(width int) string {

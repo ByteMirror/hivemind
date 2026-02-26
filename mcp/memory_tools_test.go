@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/ByteMirror/hivemind/memory"
@@ -10,6 +11,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestIsRefLookupError_NotValidObjectName(t *testing.T) {
+	assert.True(t, isRefLookupError(errors.New("fatal: Not a valid object name feature/missing")))
+}
 
 func TestHandleMemoryWrite_UsesCommitMessage(t *testing.T) {
 	mgr, err := memory.NewManager(t.TempDir(), nil)
@@ -193,4 +198,123 @@ func TestHandleMemoryDiff_ReturnsDiff(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
 	assert.Contains(t, resultText(t, result), "diff --git")
+}
+
+func TestHandleMemoryRead_BarePathFallsBackToRepo(t *testing.T) {
+	globalMgr, err := memory.NewManager(t.TempDir(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { globalMgr.Close() })
+
+	repoMgr, err := memory.NewManager(t.TempDir(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { repoMgr.Close() })
+
+	require.NoError(t, repoMgr.Write("repo-only body", "smoke.md"))
+
+	handler := handleMemoryRead(globalMgr, repoMgr, nil)
+	req := gomcp.CallToolRequest{}
+	req.Params.Arguments = map[string]interface{}{"path": "smoke.md"}
+
+	result, err := handler(context.Background(), req)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, resultText(t, result), "repo-only body")
+}
+
+func TestHandleMemoryAppend_BarePathFallsBackToRepoBranch(t *testing.T) {
+	globalMgr, err := memory.NewManager(t.TempDir(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { globalMgr.Close() })
+
+	repoMgr, err := memory.NewManager(t.TempDir(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { repoMgr.Close() })
+
+	require.NoError(t, repoMgr.Write("base", "smoke.md"))
+	require.NoError(t, repoMgr.CreateBranch("feature/smoke", ""))
+
+	handler := handleMemoryAppend(globalMgr, repoMgr, nil)
+	req := gomcp.CallToolRequest{}
+	req.Params.Arguments = map[string]interface{}{
+		"path":    "smoke.md",
+		"content": "branch: appended line",
+		"branch":  "feature/smoke",
+	}
+
+	result, err := handler(context.Background(), req)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+
+	branchBody, err := repoMgr.ReadAtRef("smoke.md", "feature/smoke")
+	require.NoError(t, err)
+	assert.Contains(t, branchBody, "branch: appended line")
+
+	mainBody, err := repoMgr.Read("smoke.md")
+	require.NoError(t, err)
+	assert.NotContains(t, mainBody, "branch: appended line")
+}
+
+func TestHandleMemoryListAndTree_RefFallsThroughWhenGlobalRefMissing(t *testing.T) {
+	globalMgr, err := memory.NewManager(t.TempDir(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { globalMgr.Close() })
+
+	repoMgr, err := memory.NewManager(t.TempDir(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { repoMgr.Close() })
+
+	require.NoError(t, repoMgr.Write("repo-only body", "smoke.md"))
+	require.NoError(t, repoMgr.CreateBranch("feature/ref", ""))
+
+	listHandler := handleMemoryList(globalMgr, repoMgr, nil)
+	listReq := gomcp.CallToolRequest{}
+	listReq.Params.Arguments = map[string]interface{}{"ref": "feature/ref"}
+
+	listResult, err := listHandler(context.Background(), listReq)
+	require.NoError(t, err)
+	assert.False(t, listResult.IsError)
+	assert.Contains(t, resultText(t, listResult), "smoke.md")
+
+	treeHandler := handleMemoryTree(globalMgr, repoMgr, nil)
+	treeReq := gomcp.CallToolRequest{}
+	treeReq.Params.Arguments = map[string]interface{}{"ref": "feature/ref"}
+
+	treeResult, err := treeHandler(context.Background(), treeReq)
+	require.NoError(t, err)
+	assert.False(t, treeResult.IsError)
+	assert.Contains(t, resultText(t, treeResult), "smoke.md")
+}
+
+func TestHandleMemoryDiff_RespectsScopeForBarePath(t *testing.T) {
+	globalMgr, err := memory.NewManager(t.TempDir(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { globalMgr.Close() })
+
+	repoMgr, err := memory.NewManager(t.TempDir(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { repoMgr.Close() })
+
+	require.NoError(t, repoMgr.Write("one", "smoke.md"))
+	info, err := repoMgr.GitBranchInfo()
+	require.NoError(t, err)
+	require.NotEmpty(t, info.Default)
+
+	const branchName = "feature/smoke"
+	require.NoError(t, repoMgr.CreateBranch(branchName, info.Default))
+	require.NoError(t, repoMgr.WriteWithCommitMessageOnBranch("two", "smoke.md", "branch edit", branchName))
+
+	handler := handleMemoryDiff(globalMgr, repoMgr, nil)
+	req := gomcp.CallToolRequest{}
+	req.Params.Arguments = map[string]interface{}{
+		"base_ref": info.Default,
+		"head_ref": branchName,
+		"path":     "smoke.md",
+		"scope":    "repo",
+	}
+
+	result, err := handler(context.Background(), req)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, resultText(t, result), "diff --git")
+	assert.Contains(t, resultText(t, result), "+two")
 }

@@ -3,6 +3,7 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ByteMirror/hivemind/memory"
@@ -445,5 +446,50 @@ func TestMemoryBrowser_BranchModeToggle(t *testing.T) {
 	}
 	if got := b.renderBranches(); got == "" {
 		t.Fatal("expected branch view output")
+	}
+}
+
+func TestClassifyDiffLine(t *testing.T) {
+	tests := []struct {
+		line string
+		want diffLineClass
+	}{
+		{line: "diff --git a/x b/x", want: diffLineHeader},
+		{line: "index 111..222 100644", want: diffLineMeta},
+		{line: "--- a/x", want: diffLineMeta},
+		{line: "+++ b/x", want: diffLineMeta},
+		{line: "@@ -1,2 +1,2 @@", want: diffLineHunk},
+		{line: "+added", want: diffLineAdd},
+		{line: "-removed", want: diffLineDel},
+		{line: " context", want: diffLineNormal},
+	}
+
+	for _, tc := range tests {
+		if got := classifyDiffLine(tc.line); got != tc.want {
+			t.Fatalf("line %q classified as %v, want %v", tc.line, got, tc.want)
+		}
+	}
+}
+
+func TestRenderStyledDiffPreview_Truncates(t *testing.T) {
+	diff := strings.Join([]string{
+		"diff --git a/a.md b/a.md",
+		"index 111..222 100644",
+		"--- a/a.md",
+		"+++ b/a.md",
+		"@@ -1 +1 @@",
+		"-old",
+		"+new",
+	}, "\n")
+
+	out := renderStyledDiffPreview(diff, 3)
+	if !strings.Contains(out, "diff --git") {
+		t.Fatal("expected diff header in output")
+	}
+	if !strings.Contains(out, "…") {
+		t.Fatal("expected truncated marker in output")
+	}
+	if !strings.Contains(out, "more diff line(s)") {
+		t.Fatal("expected truncation line count marker in output")
 	}
 }

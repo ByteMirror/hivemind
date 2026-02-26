@@ -102,8 +102,56 @@ func isRefLookupError(err error) bool {
 	s := strings.ToLower(err.Error())
 	return strings.Contains(s, "unknown revision") ||
 		strings.Contains(s, "bad revision") ||
+		strings.Contains(s, "bad object") ||
+		strings.Contains(s, "not a valid object name") ||
+		strings.Contains(s, "invalid object name") ||
+		strings.Contains(s, "pathspec") ||
+		strings.Contains(s, "did not match any file(s) known to git") ||
 		strings.Contains(s, "not in the working tree") ||
 		strings.Contains(s, "ambiguous argument")
+}
+
+func isMissingPathError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, memory.ErrFileNotFound) {
+		return true
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "memory file not found") ||
+		strings.Contains(s, "does not exist in") ||
+		strings.Contains(s, "exists on disk, but not in")
+}
+
+func shouldTryRepoFallback(err error) bool {
+	return isMissingPathError(err) || isRefLookupError(err)
+}
+
+type pathManagerCandidate struct {
+	mgr  *memory.Manager
+	path string
+}
+
+func pathManagerCandidates(path string, globalMgr, repoMgr, legacyRepoMgr *memory.Manager) []pathManagerCandidate {
+	mgr, scopedPath := routePathToManager(path, globalMgr, repoMgr, legacyRepoMgr)
+	candidates := []pathManagerCandidate{{mgr: mgr, path: scopedPath}}
+
+	// For unscoped paths, try repo stores after global to avoid surprising misses
+	// when the file/ref exists only in repo memory.
+	if _, _, scoped := parseRepoMemoryPath(path); scoped {
+		return candidates
+	}
+	if mgr != globalMgr {
+		return candidates
+	}
+	if repoMgr != nil && repoMgr != mgr {
+		candidates = append(candidates, pathManagerCandidate{mgr: repoMgr, path: path})
+	}
+	if legacyRepoMgr != nil && legacyRepoMgr != mgr && legacyRepoMgr != repoMgr {
+		candidates = append(candidates, pathManagerCandidate{mgr: legacyRepoMgr, path: path})
+	}
+	return candidates
 }
 
 func parseOptionalIntArg(req gomcp.CallToolRequest, key string, fallback int) int {
@@ -161,21 +209,35 @@ func handleMemoryRead(globalMgr *memory.Manager, repoMgr *memory.Manager, legacy
 			return gomcp.NewToolResultError("missing required parameter: path"), nil
 		}
 		ref := req.GetString("ref", "")
-		mgr, scopedPath := routePathToManager(relPath, globalMgr, repoMgr, legacyRepoMgr)
 
-		var (
-			body string
-			err  error
-		)
-		if ref == "" {
-			body, err = mgr.Read(scopedPath)
-		} else {
-			body, err = mgr.ReadAtRef(scopedPath, ref)
+		candidates := pathManagerCandidates(relPath, globalMgr, repoMgr, legacyRepoMgr)
+		var lastErr error
+		for i, candidate := range candidates {
+			if candidate.mgr == nil {
+				continue
+			}
+			var (
+				body string
+				err  error
+			)
+			if ref == "" {
+				body, err = candidate.mgr.Read(candidate.path)
+			} else {
+				body, err = candidate.mgr.ReadAtRef(candidate.path, ref)
+			}
+			if err == nil {
+				return gomcp.NewToolResultText(body), nil
+			}
+			lastErr = err
+			if i == len(candidates)-1 || !shouldTryRepoFallback(err) {
+				return gomcp.NewToolResultError("failed to read memory file: " + err.Error()), nil
+			}
 		}
-		if err != nil {
-			return gomcp.NewToolResultError("failed to read memory file: " + err.Error()), nil
+
+		if lastErr == nil {
+			return gomcp.NewToolResultError("failed to read memory file: no memory manager available"), nil
 		}
-		return gomcp.NewToolResultText(body), nil
+		return gomcp.NewToolResultError("failed to read memory file: " + lastErr.Error()), nil
 	}
 }
 
@@ -257,44 +319,34 @@ func handleMemoryGet(globalMgr *memory.Manager, repoMgr *memory.Manager, legacyR
 		lines := parseOptionalIntArg(req, "lines", 0)
 		ref := req.GetString("ref", "")
 
-		mgr, scopedPath := routePathToManager(relPath, globalMgr, repoMgr, legacyRepoMgr)
-		var (
-			text string
-			err  error
-		)
-		if ref == "" {
-			text, err = mgr.Get(scopedPath, from, lines)
-		} else {
-			text, err = mgr.GetAtRef(scopedPath, from, lines, ref)
-		}
-		if err == nil {
-			return gomcp.NewToolResultText(text), nil
-		}
-
-		if mgr == globalMgr && errors.Is(err, os.ErrNotExist) {
-			if repoMgr != nil {
-				if ref == "" {
-					text, err = repoMgr.Get(relPath, from, lines)
-				} else {
-					text, err = repoMgr.GetAtRef(relPath, from, lines, ref)
-				}
-				if err == nil {
-					return gomcp.NewToolResultText(text), nil
-				}
+		candidates := pathManagerCandidates(relPath, globalMgr, repoMgr, legacyRepoMgr)
+		var lastErr error
+		for i, candidate := range candidates {
+			if candidate.mgr == nil {
+				continue
 			}
-			if legacyRepoMgr != nil {
-				if ref == "" {
-					text, err = legacyRepoMgr.Get(relPath, from, lines)
-				} else {
-					text, err = legacyRepoMgr.GetAtRef(relPath, from, lines, ref)
-				}
-				if err == nil {
-					return gomcp.NewToolResultText(text), nil
-				}
+			var (
+				text string
+				err  error
+			)
+			if ref == "" {
+				text, err = candidate.mgr.Get(candidate.path, from, lines)
+			} else {
+				text, err = candidate.mgr.GetAtRef(candidate.path, from, lines, ref)
+			}
+			if err == nil {
+				return gomcp.NewToolResultText(text), nil
+			}
+			lastErr = err
+			if i == len(candidates)-1 || !shouldTryRepoFallback(err) {
+				return gomcp.NewToolResultError("failed to read memory file: " + err.Error()), nil
 			}
 		}
 
-		return gomcp.NewToolResultError("failed to read memory file: " + err.Error()), nil
+		if lastErr == nil {
+			return gomcp.NewToolResultError("failed to read memory file: no memory manager available"), nil
+		}
+		return gomcp.NewToolResultError("failed to read memory file: " + lastErr.Error()), nil
 	}
 }
 
@@ -567,12 +619,29 @@ func handleMemoryAppend(globalMgr *memory.Manager, repoMgr *memory.Manager, lega
 		if content == "" {
 			return gomcp.NewToolResultError("missing required parameter: content"), nil
 		}
-		mgr, scopedPath := routePathToManager(relPath, globalMgr, repoMgr, legacyRepoMgr)
-		if err := mgr.AppendOnBranch(scopedPath, content, branch); err != nil {
-			Log("memory_append error: %v", err)
-			return gomcp.NewToolResultError("failed to append: " + err.Error()), nil
+
+		candidates := pathManagerCandidates(relPath, globalMgr, repoMgr, legacyRepoMgr)
+		var lastErr error
+		for i, candidate := range candidates {
+			if candidate.mgr == nil {
+				continue
+			}
+			if err := candidate.mgr.AppendOnBranch(candidate.path, content, branch); err != nil {
+				lastErr = err
+				if i == len(candidates)-1 || !shouldTryRepoFallback(err) {
+					Log("memory_append error: %v", err)
+					return gomcp.NewToolResultError("failed to append: " + err.Error()), nil
+				}
+				continue
+			}
+			return gomcp.NewToolResultText(fmt.Sprintf("Appended %d chars to %s.", len(content), relPath)), nil
 		}
-		return gomcp.NewToolResultText(fmt.Sprintf("Appended %d chars to %s.", len(content), relPath)), nil
+
+		if lastErr != nil {
+			Log("memory_append error: %v", lastErr)
+			return gomcp.NewToolResultError("failed to append: " + lastErr.Error()), nil
+		}
+		return gomcp.NewToolResultError("failed to append: no memory manager available"), nil
 	}
 }
 
@@ -802,13 +871,40 @@ func handleMemoryDiff(globalMgr *memory.Manager, repoMgr *memory.Manager, legacy
 		relPath := path
 		if path != "" {
 			routedMgr, routedPath := routePathToManager(path, globalMgr, repoMgr, legacyRepoMgr)
-			mgr = routedMgr
-			relPath = routedPath
+			if _, _, hasRepoPrefix := parseRepoMemoryPath(path); hasRepoPrefix || strings.TrimSpace(scope) == "" {
+				mgr = routedMgr
+				relPath = routedPath
+			}
 		}
 
-		diff, err := mgr.DiffRefs(baseRef, headRef, relPath)
+		candidates := []pathManagerCandidate{{mgr: mgr, path: relPath}}
+		if path != "" && strings.TrimSpace(scope) == "" {
+			candidates = pathManagerCandidates(path, globalMgr, repoMgr, legacyRepoMgr)
+		}
+
+		var (
+			diff    string
+			err     error
+			lastErr error
+		)
+		for i, candidate := range candidates {
+			if candidate.mgr == nil {
+				continue
+			}
+			diff, err = candidate.mgr.DiffRefs(baseRef, headRef, candidate.path)
+			if err == nil {
+				break
+			}
+			lastErr = err
+			if i == len(candidates)-1 || !shouldTryRepoFallback(err) {
+				return gomcp.NewToolResultError("failed to get diff: " + err.Error()), nil
+			}
+		}
 		if err != nil {
-			return gomcp.NewToolResultError("failed to get diff: " + err.Error()), nil
+			if lastErr != nil {
+				return gomcp.NewToolResultError("failed to get diff: " + lastErr.Error()), nil
+			}
+			return gomcp.NewToolResultError("failed to get diff: no memory manager available"), nil
 		}
 		if strings.TrimSpace(diff) == "" {
 			return gomcp.NewToolResultText("(no diff)"), nil
