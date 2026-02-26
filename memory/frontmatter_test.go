@@ -74,3 +74,49 @@ func TestReadFileFrontmatter_NoFrontmatter(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, Frontmatter{}, fm)
 }
+
+func TestParseFrontmatter_ExtendedFieldsAndExtra(t *testing.T) {
+	content := "---\n" +
+		"description: Repo notes\n" +
+		"read-only: true\n" +
+		"tags:\n- memory\n- branch\n" +
+		"source: mcp\n" +
+		"limit: 2048\n" +
+		"metadata:\n  owner: team-a\n" +
+		"custom: keep-me\n" +
+		"---\n" +
+		"body\n"
+
+	fm, body := ParseFrontmatter(content)
+	assert.Equal(t, "Repo notes", fm.Description)
+	assert.True(t, fm.ReadOnly)
+	assert.Equal(t, []string{"memory", "branch"}, fm.Tags)
+	assert.Equal(t, "mcp", fm.Source)
+	assert.Equal(t, 2048, fm.Limit)
+	require.NotNil(t, fm.Metadata)
+	assert.Equal(t, "team-a", fm.Metadata["owner"])
+	require.NotNil(t, fm.Extra)
+	assert.Equal(t, "keep-me", fm.Extra["custom"])
+	assert.Equal(t, "body\n", body)
+}
+
+func TestFormatFrontmatter_PreservesExtraKeys(t *testing.T) {
+	fm := Frontmatter{
+		Description: "x",
+		Tags:        []string{"a"},
+		Source:      "tool",
+		Limit:       7,
+		Metadata:    map[string]interface{}{"k": "v"},
+		Extra:       map[string]interface{}{"unknown_key": "unknown_val"},
+	}
+	formatted := FormatFrontmatter(fm, "content\n")
+	parsed, body := ParseFrontmatter(formatted)
+
+	assert.Equal(t, "content\n", body)
+	assert.Equal(t, fm.Description, parsed.Description)
+	assert.Equal(t, fm.Tags, parsed.Tags)
+	assert.Equal(t, fm.Source, parsed.Source)
+	assert.Equal(t, fm.Limit, parsed.Limit)
+	require.NotNil(t, parsed.Extra)
+	assert.Equal(t, "unknown_val", parsed.Extra["unknown_key"])
+}

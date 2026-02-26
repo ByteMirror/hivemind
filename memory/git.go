@@ -379,6 +379,20 @@ func (g *GitRepo) CreateBranch(name, fromRef string) error {
 		if _, err := g.gitExec("check-ref-format", "--branch", name); err != nil {
 			return fmt.Errorf("invalid branch name %q: %w", name, err)
 		}
+		// Handle unborn HEAD (repo with no commits yet).
+		if _, err := g.gitExec("rev-parse", "--verify", "HEAD"); err != nil {
+			current, currentErr := g.CurrentBranch()
+			if currentErr != nil {
+				return currentErr
+			}
+			if _, err := g.gitExec("checkout", "--quiet", "-b", name); err != nil {
+				return fmt.Errorf("create branch %q on empty repo: %w", name, err)
+			}
+			if current != "" && current != name {
+				_, _ = g.gitExec("checkout", "--quiet", current)
+			}
+			return nil
+		}
 		if fromRef == "" {
 			var err error
 			fromRef, err = g.DefaultBranch()

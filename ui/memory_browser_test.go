@@ -381,3 +381,69 @@ func TestMemoryBrowser_HistoryFromRepoScopedMemoryStore(t *testing.T) {
 		t.Fatalf("expected visible history for %s, got no-history placeholder", target)
 	}
 }
+
+func TestMemoryBrowser_HistoryBranchFilterCycle(t *testing.T) {
+	dir := t.TempDir()
+	mgr, err := memory.NewManager(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	if err := mgr.Write("root", "notes.md"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.CreateBranch("feature/ui", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.WriteWithCommitMessageOnBranch("feature line", "notes.md", "feature commit", "feature/ui"); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := NewMemoryBrowser(mgr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}}
+	_, _ = b.HandleKeyPress(msg)
+	if !b.showHistory {
+		t.Fatal("expected history mode enabled")
+	}
+
+	filterBefore := b.historyBranch
+	msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}}
+	_, _ = b.HandleKeyPress(msg)
+	if b.historyBranch == filterBefore {
+		t.Fatal("expected history branch filter to cycle")
+	}
+}
+
+func TestMemoryBrowser_BranchModeToggle(t *testing.T) {
+	dir := t.TempDir()
+	mgr, err := memory.NewManager(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	if err := mgr.Write("root", "notes.md"); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := NewMemoryBrowser(mgr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}}
+	_, _ = b.HandleKeyPress(msg)
+	if !b.branchMode {
+		t.Fatal("expected branch mode to be enabled")
+	}
+	if got := b.renderBranches(); got == "" {
+		t.Fatal("expected branch view output")
+	}
+}

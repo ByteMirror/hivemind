@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -108,4 +109,91 @@ func TestLog_MultipleCommits_ParsesAllEntriesAndFiles(t *testing.T) {
 	assert.NotEmpty(t, entries[0].Files)
 	assert.Equal(t, "commit one", entries[1].Message)
 	assert.NotEmpty(t, entries[1].Files)
+}
+
+func TestLog_IncludesMetadataAndStats(t *testing.T) {
+	dir := t.TempDir()
+	repo, err := InitGitRepo(dir)
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "meta.md"), []byte("one"), 0600))
+	require.NoError(t, repo.AutoCommit("meta commit one"))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "meta.md"), []byte("one\ntwo\nthree\n"), 0600))
+	require.NoError(t, repo.AutoCommit("meta commit two"))
+
+	entries, err := repo.Log("", 5)
+	require.NoError(t, err)
+	require.NotEmpty(t, entries)
+	assert.NotEmpty(t, entries[0].SHA)
+	assert.NotEmpty(t, entries[0].Date)
+	assert.NotEmpty(t, entries[0].AuthorName)
+	assert.NotEmpty(t, entries[0].AuthorEmail)
+	assert.GreaterOrEqual(t, entries[0].Additions, 0)
+	assert.GreaterOrEqual(t, entries[0].Deletions, 0)
+}
+
+func TestBranchLifecycle_MergeAndDiff(t *testing.T) {
+	dir := t.TempDir()
+	repo, err := InitGitRepo(dir)
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.md"), []byte("root"), 0600))
+	require.NoError(t, repo.AutoCommit("initial"))
+
+	defBranch, err := repo.DefaultBranch()
+	require.NoError(t, err)
+	require.NotEmpty(t, defBranch)
+
+	require.NoError(t, repo.CreateBranch("feature/memory", ""))
+	_, err = repo.gitExec("checkout", "--quiet", "feature/memory")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.md"), []byte("root\nfeature\n"), 0600))
+	require.NoError(t, repo.AutoCommit("feature change"))
+	_, err = repo.gitExec("checkout", "--quiet", defBranch)
+	require.NoError(t, err)
+
+	changed, err := repo.MergeBranch("feature/memory", defBranch, "ff-only")
+	require.NoError(t, err)
+	require.NotEmpty(t, changed)
+
+	logEntries, err := repo.LogWithBranch("", 20, defBranch)
+	require.NoError(t, err)
+	require.NotEmpty(t, logEntries)
+	assert.Equal(t, defBranch, logEntries[0].Branch)
+
+	require.NoError(t, repo.DeleteBranch("feature/memory", false))
+
+	diff, err := repo.DiffRefs(logEntries[len(logEntries)-1].SHA, logEntries[0].SHA, "notes.md")
+	require.NoError(t, err)
+	assert.NotEmpty(t, diff)
+}
+
+func TestAutoCommit_ConcurrentCalls_NoRepoBusyOrCorruption(t *testing.T) {
+	dir := t.TempDir()
+	repo, err := InitGitRepo(dir)
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 20)
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			name := filepath.Join(dir, "c", "file-"+string(rune('a'+idx))+".md")
+			_ = os.MkdirAll(filepath.Dir(name), 0700)
+			_ = os.WriteFile(name, []byte("v"), 0600)
+			if commitErr := repo.AutoCommit("parallel commit"); commitErr != nil && !errors.Is(commitErr, ErrNoChanges) {
+				errCh <- commitErr
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errCh)
+	for e := range errCh {
+		require.NoError(t, e)
+	}
+
+	entries, err := repo.Log("", 50)
+	require.NoError(t, err)
+	assert.NotEmpty(t, entries)
 }

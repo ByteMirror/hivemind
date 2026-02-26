@@ -111,3 +111,86 @@ func TestHandleMemoryHistory_ScopeFilteringAndScopeField(t *testing.T) {
 		assert.Equal(t, "global", e.Scope)
 	}
 }
+
+func TestHandleMemoryWrite_WithBranchDoesNotTouchDefault(t *testing.T) {
+	mgr, err := memory.NewManager(t.TempDir(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { mgr.Close() })
+	require.NoError(t, mgr.WriteWithCommitMessageOnBranch("default note", "notes.md", "default", ""))
+	require.NoError(t, mgr.CreateBranch("feature/mcp", ""))
+
+	handler := handleMemoryWrite(mgr, nil)
+	req := gomcp.CallToolRequest{}
+	req.Params.Arguments = map[string]interface{}{
+		"content": "branch-only note",
+		"file":    "notes.md",
+		"branch":  "feature/mcp",
+		"scope":   "global",
+	}
+
+	result, err := handler(context.Background(), req)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+
+	defaultBody, err := mgr.Read("notes.md")
+	require.NoError(t, err)
+	assert.NotContains(t, defaultBody, "branch-only note")
+
+	branchBody, err := mgr.ReadAtRef("notes.md", "feature/mcp")
+	require.NoError(t, err)
+	assert.Contains(t, branchBody, "branch-only note")
+}
+
+func TestHandleMemoryBranches_ListsBranchInfo(t *testing.T) {
+	mgr, err := memory.NewManager(t.TempDir(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { mgr.Close() })
+	require.NoError(t, mgr.Write("x", "notes.md"))
+	require.NoError(t, mgr.CreateBranch("feature/one", ""))
+
+	handler := handleMemoryBranches(mgr, nil, nil)
+	req := gomcp.CallToolRequest{}
+	req.Params.Arguments = map[string]interface{}{"scope": "global"}
+
+	result, err := handler(context.Background(), req)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+
+	var rows []memoryBranchState
+	require.NoError(t, json.Unmarshal([]byte(resultText(t, result)), &rows))
+	require.NotEmpty(t, rows)
+	assert.True(t, rows[0].GitAvailable)
+	assert.Contains(t, rows[0].Branches, "feature/one")
+}
+
+func TestHandleMemoryDiff_ReturnsDiff(t *testing.T) {
+	mgr, err := memory.NewManager(t.TempDir(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { mgr.Close() })
+
+	require.NoError(t, mgr.Write("one", "diff.md"))
+	entries, err := mgr.History("", 10)
+	require.NoError(t, err)
+	require.NotEmpty(t, entries)
+	base := entries[0].SHA
+
+	require.NoError(t, mgr.Write("two", "diff.md"))
+	entries, err = mgr.History("", 10)
+	require.NoError(t, err)
+	require.NotEmpty(t, entries)
+	head := entries[0].SHA
+
+	handler := handleMemoryDiff(mgr, nil, nil)
+	req := gomcp.CallToolRequest{}
+	req.Params.Arguments = map[string]interface{}{
+		"base_ref": base,
+		"head_ref": head,
+		"path":     "diff.md",
+		"scope":    "global",
+	}
+
+	result, err := handler(context.Background(), req)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, resultText(t, result), "diff --git")
+}

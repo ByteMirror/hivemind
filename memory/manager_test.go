@@ -141,3 +141,77 @@ func TestManager_GitBranches(t *testing.T) {
 	assert.NotEmpty(t, current)
 	assert.NotEmpty(t, branches)
 }
+
+func TestManager_BranchWriteAndReadAtRef(t *testing.T) {
+	dir := t.TempDir()
+	mgr, err := NewManager(dir, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { mgr.Close() })
+
+	require.NoError(t, mgr.Write("root note", "notes.md"))
+	require.NoError(t, mgr.CreateBranch("feature/memory", ""))
+	require.NoError(t, mgr.WriteWithCommitMessageOnBranch("branch note", "notes.md", "branch write", "feature/memory"))
+
+	// Default branch should remain unchanged before merge.
+	body, err := mgr.Read("notes.md")
+	require.NoError(t, err)
+	assert.NotContains(t, body, "branch note")
+
+	branchBody, err := mgr.ReadAtRef("notes.md", "feature/memory")
+	require.NoError(t, err)
+	assert.Contains(t, branchBody, "branch note")
+}
+
+func TestManager_MergeBranch_SyncsDefaultIndex(t *testing.T) {
+	dir := t.TempDir()
+	mgr, err := NewManager(dir, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { mgr.Close() })
+
+	require.NoError(t, mgr.Write("root", "merge.md"))
+	require.NoError(t, mgr.CreateBranch("feature/index", ""))
+	require.NoError(t, mgr.WriteWithCommitMessageOnBranch("feature line", "merge.md", "feature update", "feature/index"))
+
+	results, err := mgr.Search("feature line", SearchOpts{MaxResults: 5})
+	require.NoError(t, err)
+	assert.Empty(t, results, "feature branch content should not be indexed before merge")
+
+	require.NoError(t, mgr.MergeBranch("feature/index", "", "ff-only"))
+
+	results, err = mgr.Search("feature line", SearchOpts{MaxResults: 5})
+	require.NoError(t, err)
+	assert.NotEmpty(t, results, "merged content should be indexed on default branch")
+}
+
+func TestManager_ListAndTreeAtRef(t *testing.T) {
+	dir := t.TempDir()
+	mgr, err := NewManager(dir, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { mgr.Close() })
+
+	require.NoError(t, mgr.Write("---\ndescription: Root file\n---\nroot", "root.md"))
+	require.NoError(t, mgr.CreateBranch("feature/tree", ""))
+	require.NoError(t, mgr.WriteWithCommitMessageOnBranch("---\ndescription: Branch file\n---\nbranch", "branch-only.md", "branch file", "feature/tree"))
+
+	files, err := mgr.ListAtRef("feature/tree")
+	require.NoError(t, err)
+	found := false
+	for _, f := range files {
+		if f.Path == "branch-only.md" {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found)
+
+	tree, err := mgr.TreeAtRef("feature/tree")
+	require.NoError(t, err)
+	found = false
+	for _, e := range tree {
+		if e.Path == "branch-only.md" && e.Description == "Branch file" {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found)
+}

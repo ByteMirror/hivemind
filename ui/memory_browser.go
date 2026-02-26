@@ -21,6 +21,7 @@ type focusPane int
 const (
 	focusList focusPane = iota
 	focusContent
+	historyDiffPreviewMaxLines = 32
 )
 
 // memoryFile combines tree metadata with list metadata for display.
@@ -463,7 +464,7 @@ func (b *MemoryBrowser) loadHistorySelected() {
 	if len(entries) > 0 && entries[0].ParentSHA != "" {
 		diff, diffErr := mgr.DiffRefs(entries[0].ParentSHA, entries[0].SHA, relPath)
 		if diffErr == nil {
-			b.historyDiff = truncateLines(strings.TrimSpace(diff), 28)
+			b.historyDiff = strings.TrimSpace(diff)
 		}
 	}
 }
@@ -525,8 +526,9 @@ func (b *MemoryBrowser) renderHistory() string {
 		sb.WriteString(fmt.Sprintf("%s  %s  %s%s\n", ts, sha, entry.Message, extra))
 	}
 	if b.historyDiff != "" {
-		sb.WriteString("\n---\nlatest diff preview:\n")
-		sb.WriteString(b.historyDiff)
+		sb.WriteString("\n---\n")
+		sb.WriteString(browserDiffPreviewTitleStyle.Render("latest diff preview:\n"))
+		sb.WriteString(renderStyledDiffPreview(b.historyDiff, historyDiffPreviewMaxLines))
 	}
 	return strings.TrimSpace(sb.String())
 }
@@ -891,6 +893,67 @@ func truncateLines(text string, maxLines int) string {
 	return strings.Join(lines[:maxLines], "\n") + "\n…"
 }
 
+type diffLineClass int
+
+const (
+	diffLineNormal diffLineClass = iota
+	diffLineHeader
+	diffLineMeta
+	diffLineHunk
+	diffLineAdd
+	diffLineDel
+)
+
+func classifyDiffLine(line string) diffLineClass {
+	switch {
+	case strings.HasPrefix(line, "diff --git "):
+		return diffLineHeader
+	case strings.HasPrefix(line, "index "), strings.HasPrefix(line, "--- "), strings.HasPrefix(line, "+++ "), strings.HasPrefix(line, "Binary files"):
+		return diffLineMeta
+	case strings.HasPrefix(line, "@@"):
+		return diffLineHunk
+	case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++ "):
+		return diffLineAdd
+	case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "--- "):
+		return diffLineDel
+	default:
+		return diffLineNormal
+	}
+}
+
+func styleDiffLine(line string) string {
+	switch classifyDiffLine(line) {
+	case diffLineHeader:
+		return browserDiffHeaderStyle.Render(line)
+	case diffLineMeta:
+		return browserDiffMetaStyle.Render(line)
+	case diffLineHunk:
+		return browserDiffHunkStyle.Render(line)
+	case diffLineAdd:
+		return browserDiffAddStyle.Render(line)
+	case diffLineDel:
+		return browserDiffDelStyle.Render(line)
+	default:
+		return line
+	}
+}
+
+func renderStyledDiffPreview(diff string, maxLines int) string {
+	if strings.TrimSpace(diff) == "" {
+		return ""
+	}
+	diff = truncateLines(diff, maxLines)
+	lines := strings.Split(diff, "\n")
+	var sb strings.Builder
+	for i, line := range lines {
+		sb.WriteString(styleDiffLine(line))
+		if i != len(lines)-1 {
+			sb.WriteString("\n")
+		}
+	}
+	return sb.String()
+}
+
 // --- styles ---
 
 var (
@@ -938,6 +1001,27 @@ var (
 	browserTitleStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#F0A868")).
 				Bold(true)
+
+	browserDiffPreviewTitleStyle = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("#8AB4F8")).
+					Bold(true)
+
+	browserDiffHeaderStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#6FA8DC")).
+				Bold(true)
+
+	browserDiffMetaStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#AAB7C4"))
+
+	browserDiffHunkStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#E6C07B")).
+				Bold(true)
+
+	browserDiffAddStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#89D185"))
+
+	browserDiffDelStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#F28B82"))
 )
 
 func (b *MemoryBrowser) renderList(width int) string {
@@ -983,6 +1067,9 @@ func (b *MemoryBrowser) renderList(width int) string {
 				meta += " "
 			}
 			meta += fmt.Sprintf("c:%d", f.HistoryCommits)
+			if f.HistoryBranch != "" {
+				meta += " br:" + f.HistoryBranch
+			}
 		}
 
 		// Truncate name to fit.
@@ -1090,14 +1177,17 @@ func (b *MemoryBrowser) renderHint() string {
 	if b.editing {
 		return browserHintStyle.Render("  [ctrl+s] save  [esc] cancel edit")
 	}
+	if b.branchMode {
+		return browserHintStyle.Render("  [up/down] select branch  [c] create  [m] merge->default  [x] delete  [b/esc] close branches")
+	}
 	if b.confirmDelete {
 		return browserHintStyle.Render("  [y] confirm delete  [n] cancel")
 	}
 	sel := b.selectedFile()
 	if sel != nil && sel.IsSystem {
-		return browserHintStyle.Render("  [h] history/content  [e] edit  [u] unpin  [d] delete  [tab] switch pane  [esc] close")
+		return browserHintStyle.Render("  [h] history/content  [f] cycle history branch  [b] branches  [e] edit  [u] unpin  [d] delete  [tab] switch pane  [esc] close")
 	}
-	return browserHintStyle.Render("  [h] history/content  [e] edit  [p] pin  [d] delete  [tab] switch pane  [esc] close")
+	return browserHintStyle.Render("  [h] history/content  [f] cycle history branch  [b] branches  [e] edit  [p] pin  [d] delete  [tab] switch pane  [esc] close")
 }
 
 func browserMax(a, b int) int {
