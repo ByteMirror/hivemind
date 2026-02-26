@@ -1,6 +1,8 @@
 package memory
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -95,4 +97,47 @@ func TestManager_SearchReturnsSnippets(t *testing.T) {
 		assert.NotEmpty(t, results[0].Snippet)
 		assert.LessOrEqual(t, len(results[0].Snippet), snippetMaxChars+10)
 	}
+}
+
+func TestNewManagerWithOptions_GitDisabled(t *testing.T) {
+	dir := t.TempDir()
+	mgr, err := NewManagerWithOptions(dir, nil, ManagerOptions{GitEnabled: false})
+	require.NoError(t, err)
+	t.Cleanup(func() { mgr.Close() })
+
+	require.NoError(t, mgr.Write("fact", "notes.md"))
+	assert.False(t, mgr.GitEnabled())
+
+	_, statErr := os.Stat(filepath.Join(dir, ".git"))
+	assert.True(t, os.IsNotExist(statErr))
+
+	history, histErr := mgr.History("", 10)
+	require.NoError(t, histErr)
+	assert.Nil(t, history)
+}
+
+func TestManager_WriteWithCommitMessage(t *testing.T) {
+	dir := t.TempDir()
+	mgr, err := NewManager(dir, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { mgr.Close() })
+
+	require.NoError(t, mgr.WriteWithCommitMessage("fact", "notes.md", "custom memory commit"))
+	history, err := mgr.History("", 10)
+	require.NoError(t, err)
+	require.NotEmpty(t, history)
+	assert.Equal(t, "custom memory commit", history[0].Message)
+}
+
+func TestManager_GitBranches(t *testing.T) {
+	dir := t.TempDir()
+	mgr, err := NewManager(dir, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { mgr.Close() })
+
+	require.NoError(t, mgr.Write("fact", "notes.md"))
+	current, branches, err := mgr.GitBranches()
+	require.NoError(t, err)
+	assert.NotEmpty(t, current)
+	assert.NotEmpty(t, branches)
 }

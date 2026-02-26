@@ -1,6 +1,7 @@
 package session
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -44,33 +45,49 @@ const (
 // for the agent to respond. Only called when memory is configured.
 //
 // Callers are responsible for ensuring the instance is in a valid state before
-// calling this function (started, not paused, tmux session exists). Kill() uses
-// CompareAndSwap to guarantee single-caller semantics before invoking this.
-func SendMemoryAutoWritePrompt(inst *Instance) error {
+// calling this function. Kill() uses CompareAndSwap to guarantee single-caller
+// semantics before invoking this.
+//
+// Returns sent=true only when the prompt was successfully delivered.
+func SendMemoryAutoWritePrompt(inst *Instance) (sent bool, err error) {
 	// Only send the prompt when memory is configured.
 	if getMemoryManager() == nil {
-		return nil
-	}
-
-	// Only act on non-paused instances with an active tmux session.
-	if inst.Status == Paused {
-		return nil
+		return false, nil
 	}
 	if inst.tmuxSession == nil {
-		return nil
+		return false, nil
 	}
 	if !inst.tmuxSession.DoesSessionExist() {
-		return nil
+		return false, nil
 	}
 
 	log.InfoLog.Printf("memory-autosave[%s]: sending auto-write prompt", inst.Title)
 
-	// Best-effort: if the agent is mid-task, these keystrokes may go to a child
-	// process rather than Claude's input buffer. We accept this race — the
-	// auto-write is a courtesy prompt, not a guarantee.
-	if err := inst.tmuxSession.SendKeys(memoryAutoWritePrompt); err != nil {
-		return err
+	// Prefer tmux server-side send-keys so the prompt is delivered reliably
+	// even when no client is attached.
+	if err := inst.tmuxSession.SendTextViaTmux(memoryAutoWritePrompt); err == nil {
+		return true, nil
 	}
 
-	return nil
+	// Fallback to direct PTY write for compatibility with environments where
+	// tmux send-keys is unavailable.
+	if err := inst.tmuxSession.SendKeys(memoryAutoWritePrompt); err != nil {
+		return false, fmt.Errorf("send auto-write prompt: %w", err)
+	}
+	return true, nil
+}
+
+// KillInstanceAsync runs Kill() in a background goroutine.
+// The operation is tracked via closeWg so shutdown can wait for completion.
+func KillInstanceAsync(inst *Instance) {
+	if inst == nil {
+		return
+	}
+	closeWg.Add(1)
+	go func() {
+		defer closeWg.Done()
+		if err := inst.Kill(); err != nil {
+			log.ErrorLog.Printf("kill[%s]: %v", inst.Title, err)
+		}
+	}()
 }

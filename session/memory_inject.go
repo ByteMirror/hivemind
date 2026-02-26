@@ -14,10 +14,9 @@ const (
 	memoryInjectFooter = "<!-- hivemind-memory-end -->"
 )
 
-// InjectMemoryContext is the primary injection function called on agent start/resume.
-// globalMgr must be non-nil; repoMgr may be nil if no repo memory dir exists yet.
-// worktreePath is used to derive the repo name for the section heading and repo query.
-func InjectMemoryContext(worktreePath string, globalMgr *memory.Manager, repoMgr *memory.Manager, count int) error {
+// InjectMemoryContextForRepo is the primary injection function called on agent
+// start/resume. globalMgr must be non-nil; repo managers may be nil.
+func InjectMemoryContextForRepo(worktreePath, repoName string, globalMgr *memory.Manager, repoMgr *memory.Manager, legacyRepoMgr *memory.Manager, count int) error {
 	if globalMgr == nil {
 		return nil
 	}
@@ -41,24 +40,51 @@ func InjectMemoryContext(worktreePath string, globalMgr *memory.Manager, repoMgr
 		return fmt.Errorf("memory query (global) for CLAUDE.md: %w", err)
 	}
 
-	// Query repo manager for project-specific context (if available).
+	// Query repo managers for project-specific context (if available).
 	var repoResults []memory.SearchResult
+	if repoName == "" {
+		repoName = filepath.Base(worktreePath)
+	}
+	repoQuery := repoName + " project architecture decisions"
+	seenRepo := map[string]struct{}{}
 	if repoMgr != nil {
-		repoSlug := filepath.Base(worktreePath)
 		repoResults, err = repoMgr.Search(
-			repoSlug+" project architecture decisions",
+			repoQuery,
 			memory.SearchOpts{MaxResults: count},
 		)
 		if err != nil {
 			return fmt.Errorf("memory query (repo) for CLAUDE.md: %w", err)
 		}
+		for _, r := range repoResults {
+			seenRepo[fmt.Sprintf("%s\x00%d", r.Path, r.StartLine)] = struct{}{}
+		}
+	}
+	if legacyRepoMgr != nil {
+		legacyResults, legacyErr := legacyRepoMgr.Search(
+			repoQuery,
+			memory.SearchOpts{MaxResults: count},
+		)
+		if legacyErr == nil {
+			for _, r := range legacyResults {
+				key := fmt.Sprintf("%s\x00%d", r.Path, r.StartLine)
+				if _, ok := seenRepo[key]; ok {
+					continue
+				}
+				seenRepo[key] = struct{}{}
+				repoResults = append(repoResults, r)
+			}
+		}
 	}
 
-	repoName := filepath.Base(worktreePath)
 	section := buildMemorySection(treeEntries, systemFiles, globalResults, repoResults, repoName)
 
 	claudeMDPath := filepath.Join(worktreePath, "CLAUDE.md")
 	return upsertMemorySection(claudeMDPath, section)
+}
+
+// InjectMemoryContext is the compatibility wrapper used by older call sites.
+func InjectMemoryContext(worktreePath string, globalMgr *memory.Manager, repoMgr *memory.Manager, count int) error {
+	return InjectMemoryContextForRepo(worktreePath, filepath.Base(worktreePath), globalMgr, repoMgr, nil, count)
 }
 
 // injectMemoryContext is the legacy unexported wrapper preserved for

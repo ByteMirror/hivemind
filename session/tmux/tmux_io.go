@@ -34,6 +34,23 @@ func (t *TmuxSession) SendKeys(keys string) error {
 	return err
 }
 
+// SendTextViaTmux sends literal text to the tmux session using `tmux send-keys -l`,
+// then presses Enter. This goes through tmux's server directly rather than through
+// the client PTY, making it more reliable for delivering prompts to programs.
+func (t *TmuxSession) SendTextViaTmux(text string) error {
+	// Send the text literally (-l prevents interpreting key names).
+	cmd := exec.Command("tmux", "send-keys", "-t", t.sanitizedName, "-l", text)
+	if err := t.cmdExec.Run(cmd); err != nil {
+		return fmt.Errorf("tmux send-keys failed: %w", err)
+	}
+	// Press Enter to submit.
+	cmd = exec.Command("tmux", "send-keys", "-t", t.sanitizedName, "Enter")
+	if err := t.cmdExec.Run(cmd); err != nil {
+		return fmt.Errorf("tmux send-keys Enter failed: %w", err)
+	}
+	return nil
+}
+
 // HasUpdated checks if the tmux pane content has changed since the last tick. It also returns true if
 // the tmux pane has a prompt for aider or claude code.
 func (t *TmuxSession) HasUpdated() (updated bool, hasPrompt bool) {

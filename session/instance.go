@@ -66,6 +66,8 @@ type Instance struct {
 	ParentTitle string
 	// SetupScript is an optional shell command to run once after the worktree is ready.
 	SetupScript string
+	// InitialPrompt is passed to Claude Code via `-p` flag at startup (ephemeral, not persisted).
+	InitialPrompt string
 
 	// AutomationID is set when this instance was spawned by an automation.
 	// Empty for manually-created instances.
@@ -232,6 +234,9 @@ type InstanceOptions struct {
 	// SetupScript is an optional shell command to run before the agent starts.
 	// It runs in the instance's worktree directory.
 	SetupScript string
+	// InitialPrompt is passed to Claude Code via `-p` flag at startup.
+	// This is more reliable than injecting text after the agent starts.
+	InitialPrompt string
 }
 
 func NewInstance(opts InstanceOptions) (*Instance, error) {
@@ -259,6 +264,7 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		ParentTitle:     opts.ParentTitle,
 		AutomationID:    opts.AutomationID,
 		SetupScript:     opts.SetupScript,
+		InitialPrompt:   opts.InitialPrompt,
 	}, nil
 }
 

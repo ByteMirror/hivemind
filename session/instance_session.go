@@ -202,7 +202,7 @@ func (i *Instance) GetWorkingPath() string {
 
 // WaitForReady polls the tmux output until it stabilizes, indicating the
 // program has finished initializing and is ready for input. Returns after
-// the output hasn't changed for 3 consecutive checks (~1.5s of stability),
+// the output hasn't changed for 2 consecutive checks (~1s of stability),
 // or after the timeout elapses (best-effort, never errors on timeout).
 func (i *Instance) WaitForReady(timeout time.Duration) {
 	if !i.started.Load() || i.tmuxSession == nil {
@@ -210,7 +210,7 @@ func (i *Instance) WaitForReady(timeout time.Duration) {
 	}
 
 	const pollInterval = 500 * time.Millisecond
-	const stableNeeded = 3
+	const stableNeeded = 2
 
 	deadline := time.Now().Add(timeout)
 	var lastContent string
@@ -222,10 +222,13 @@ func (i *Instance) WaitForReady(timeout time.Duration) {
 		if err != nil {
 			continue
 		}
-		clean := strings.TrimSpace(content)
+		// Strip ANSI escape codes before comparing — cursor positioning,
+		// color changes, and spinner frames would prevent stabilization.
+		clean := strings.TrimSpace(ansiRegex.ReplaceAllString(content, ""))
 		if clean == lastContent && len(clean) > 0 {
 			stableCount++
 			if stableCount >= stableNeeded {
+				log.InfoLog.Printf("WaitForReady: output stabilized for %q", i.Title)
 				return
 			}
 		} else {
@@ -233,9 +236,11 @@ func (i *Instance) WaitForReady(timeout time.Duration) {
 			lastContent = clean
 		}
 	}
+	log.WarningLog.Printf("WaitForReady: timed out after %v, proceeding anyway", timeout)
 }
 
-// SendPrompt sends a prompt to the tmux session
+// SendPrompt sends a prompt to the tmux session using `tmux send-keys`,
+// which delivers text reliably through tmux's server rather than raw PTY writes.
 func (i *Instance) SendPrompt(prompt string) error {
 	if !i.started.Load() {
 		return ErrInstanceNotStarted
@@ -243,17 +248,7 @@ func (i *Instance) SendPrompt(prompt string) error {
 	if i.tmuxSession == nil {
 		return fmt.Errorf("tmux session not initialized")
 	}
-	if err := i.tmuxSession.SendKeys(prompt); err != nil {
-		return fmt.Errorf("error sending keys to tmux session: %w", err)
-	}
-
-	// Brief pause to prevent carriage return from being interpreted as newline
-	time.Sleep(100 * time.Millisecond)
-	if err := i.tmuxSession.TapEnter(); err != nil {
-		return fmt.Errorf("error tapping enter: %w", err)
-	}
-
-	return nil
+	return i.tmuxSession.SendTextViaTmux(prompt)
 }
 
 // PreviewFullHistory captures the entire tmux pane output including full scrollback history

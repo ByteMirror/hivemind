@@ -89,3 +89,23 @@ func TestLog_FilterByPath(t *testing.T) {
 	require.Len(t, entries, 1)
 	assert.Equal(t, "add a", entries[0].Message)
 }
+
+func TestLog_MultipleCommits_ParsesAllEntriesAndFiles(t *testing.T) {
+	dir := t.TempDir()
+	repo, err := InitGitRepo(dir)
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "one.md"), []byte("one"), 0600))
+	require.NoError(t, repo.AutoCommit("commit one"))
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "two.md"), []byte("two"), 0600))
+	require.NoError(t, repo.AutoCommit("commit two"))
+
+	entries, err := repo.Log("", 10)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(entries), 2)
+	assert.Equal(t, "commit two", entries[0].Message)
+	assert.NotEmpty(t, entries[0].Files)
+	assert.Equal(t, "commit one", entries[1].Message)
+	assert.NotEmpty(t, entries[1].Files)
+}

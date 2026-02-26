@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ByteMirror/hivemind/config"
 	"github.com/ByteMirror/hivemind/log"
 
 	"github.com/go-git/go-git/v5"
@@ -16,44 +17,32 @@ import (
 
 // Setup creates a new worktree for the session
 func (g *GitWorktree) Setup() error {
-	// Ensure worktrees directory exists early (can be done in parallel with branch check)
+	if !isValidBranchName(g.branchName) {
+		cfg := config.LoadConfig()
+		old := g.branchName
+		g.branchName = makeSafeBranchName(cfg.BranchPrefix, g.sessionName)
+		if log.WarningLog != nil {
+			log.WarningLog.Printf("git worktree: invalid branch %q for session %q, using %q", old, g.sessionName, g.branchName)
+		}
+	}
+
 	worktreesDir, err := getWorktreeDirectory()
 	if err != nil {
 		return fmt.Errorf("failed to get worktree directory: %w", err)
 	}
 
-	// Create directory and check branch existence in parallel
-	errChan := make(chan error, 2)
-	var branchExists bool
-
-	// Goroutine for directory creation
-	go func() {
-		errChan <- os.MkdirAll(worktreesDir, 0755)
-	}()
-
-	// Goroutine for branch check
-	go func() {
-		repo, err := git.PlainOpen(g.repoPath)
-		if err != nil {
-			errChan <- fmt.Errorf("failed to open repository: %w", err)
-			return
-		}
-
-		branchRef := plumbing.NewBranchReferenceName(g.branchName)
-		if _, err := repo.Reference(branchRef, false); err == nil {
-			branchExists = true
-		}
-		errChan <- nil
-	}()
-
-	// Wait for both operations
-	for i := 0; i < 2; i++ {
-		if err := <-errChan; err != nil {
-			return err
-		}
+	if err := os.MkdirAll(worktreesDir, 0755); err != nil {
+		return fmt.Errorf("failed to create worktrees directory: %w", err)
 	}
 
-	if branchExists {
+	// Check if the branch already exists
+	repo, err := git.PlainOpen(g.repoPath)
+	if err != nil {
+		return fmt.Errorf("failed to open repository: %w", err)
+	}
+
+	branchRef := plumbing.NewBranchReferenceName(g.branchName)
+	if _, err := repo.Reference(branchRef, false); err == nil {
 		return g.setupFromExistingBranch()
 	}
 	return g.setupNewWorktree()
@@ -142,7 +131,10 @@ func (g *GitWorktree) Cleanup() error {
 	// Check if branch exists before attempting removal
 	if _, err := repo.Reference(branchRef, false); err == nil {
 		if err := repo.Storer.RemoveReference(branchRef); err != nil {
-			errs = append(errs, fmt.Errorf("failed to remove branch %s: %w", g.branchName, err))
+			// Tolerate "directory not empty" — see cleanupExistingBranch comment
+			if !strings.Contains(err.Error(), "directory not empty") {
+				errs = append(errs, fmt.Errorf("failed to remove branch %s: %w", g.branchName, err))
+			}
 		}
 	} else if err != plumbing.ErrReferenceNotFound {
 		errs = append(errs, fmt.Errorf("error checking branch %s existence: %w", g.branchName, err))

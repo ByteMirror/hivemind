@@ -2,6 +2,8 @@ package ui
 
 import (
 	"fmt"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,20 +25,35 @@ const (
 
 // memoryFile combines tree metadata with list metadata for display.
 type memoryFile struct {
-	Path        string
-	Description string
-	IsSystem    bool
-	SizeBytes   int64
-	UpdatedAt   int64 // Unix ms
+	Path           string
+	Description    string
+	IsSystem       bool
+	SizeBytes      int64
+	UpdatedAt      int64 // Unix ms
+	HistoryCommits int
+	HistoryBranch  string
 }
 
 // MemoryBrowser is a full-screen split-pane memory file viewer and editor.
 type MemoryBrowser struct {
-	mgr             *memory.Manager
-	files           []memoryFile
-	selectedIdx     int
-	content         string // file body (frontmatter stripped) for the selected file
-	originalContent string // content before edit started
+	mgr              *memory.Manager
+	repoMgrs         map[string]*memory.Manager
+	files            []memoryFile
+	selectedIdx      int
+	content          string // file body (frontmatter stripped) for the selected file
+	originalContent  string // content before edit started
+	showHistory      bool
+	history          []memory.GitLogEntry
+	historyErr       string
+	historyBranch    string
+	historyDiff      string
+	historyLimit     int
+	gitCurrentBranch string
+	gitBranches      []string
+
+	branchMode      bool
+	branchSelected  int
+	branchStatusMsg string
 
 	editing  bool
 	textarea textarea.Model
@@ -62,10 +79,12 @@ func NewMemoryBrowser(mgr *memory.Manager) (*MemoryBrowser, error) {
 	ta.MaxHeight = 0
 
 	b := &MemoryBrowser{
-		mgr:      mgr,
-		textarea: ta,
-		viewport: viewport.New(0, 0),
-		focus:    focusList,
+		mgr:          mgr,
+		repoMgrs:     make(map[string]*memory.Manager),
+		textarea:     ta,
+		viewport:     viewport.New(0, 0),
+		focus:        focusList,
+		historyLimit: 30,
 	}
 
 	b.refreshFileList()
@@ -73,6 +92,16 @@ func NewMemoryBrowser(mgr *memory.Manager) (*MemoryBrowser, error) {
 		b.loadSelected()
 	}
 	return b, nil
+}
+
+// Close releases any cached repo-scoped managers opened by the browser.
+func (b *MemoryBrowser) Close() {
+	for slug, mgr := range b.repoMgrs {
+		if mgr != nil {
+			mgr.Close()
+		}
+		delete(b.repoMgrs, slug)
+	}
 }
 
 // SelectedFile returns the relative path of the currently selected file.
@@ -92,6 +121,8 @@ func (b *MemoryBrowser) IsEditing() bool { return b.editing }
 // EnterEditMode switches the right pane into an editable textarea.
 func (b *MemoryBrowser) EnterEditMode() {
 	b.confirmDelete = false
+	b.showHistory = false
+	b.branchMode = false
 	b.editing = true
 	b.originalContent = b.content
 	b.textarea.SetValue(b.content)
@@ -105,6 +136,7 @@ func (b *MemoryBrowser) CancelEdit() {
 	b.content = b.originalContent
 	b.textarea.Blur()
 	b.focus = focusList
+	b.refreshViewportContent(false)
 }
 
 // SetEditContent sets the textarea value (used in tests).
@@ -130,6 +162,7 @@ func (b *MemoryBrowser) SaveEdit() error {
 	b.textarea.Blur()
 	b.focus = focusList
 	b.refreshFileList()
+	b.loadSelected()
 	return nil
 }
 
@@ -227,6 +260,39 @@ func (b *MemoryBrowser) HandleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 		}
 	}
 
+	if b.branchMode {
+		switch msg.String() {
+		case "esc", "b":
+			b.branchMode = false
+			b.branchStatusMsg = ""
+			b.refreshViewportContent(true)
+			return nil, false
+		case "up", "k":
+			if b.branchSelected > 0 {
+				b.branchSelected--
+				b.refreshViewportContent(true)
+			}
+			return nil, false
+		case "down", "j":
+			if _, options, _ := b.branchOptions(); b.branchSelected < len(options)-1 {
+				b.branchSelected++
+				b.refreshViewportContent(true)
+			}
+			return nil, false
+		case "c":
+			b.createBranchFromSelection()
+			return nil, false
+		case "x":
+			b.deleteSelectedBranch()
+			return nil, false
+		case "m":
+			b.mergeSelectedBranch()
+			return nil, false
+		default:
+			return nil, false
+		}
+	}
+
 	switch msg.String() {
 	case "esc":
 		if b.confirmDelete {
@@ -289,6 +355,24 @@ func (b *MemoryBrowser) HandleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 				_ = b.UnpinSelected()
 			}
 		}
+	case "h":
+		if b.SelectedFile() != "" && !b.confirmDelete {
+			b.showHistory = !b.showHistory
+			b.refreshViewportContent(true)
+		}
+	case "f":
+		if b.showHistory && b.SelectedFile() != "" && !b.confirmDelete {
+			b.cycleHistoryBranchFilter()
+			b.refreshViewportContent(true)
+		}
+	case "b":
+		if !b.confirmDelete && b.mgr.GitEnabled() {
+			b.branchMode = !b.branchMode
+			if !b.branchMode {
+				b.branchStatusMsg = ""
+			}
+			b.refreshViewportContent(true)
+		}
 	}
 	return nil, false
 }
@@ -327,20 +411,124 @@ func (b *MemoryBrowser) paneSizes() (left, right int) {
 func (b *MemoryBrowser) loadSelected() {
 	if len(b.files) == 0 {
 		b.content = ""
+		b.history = nil
+		b.historyErr = ""
+		b.historyDiff = ""
 		b.viewport.SetContent("")
 		return
 	}
 	path := b.files[b.selectedIdx].Path
-	body, err := b.mgr.Read(path)
+	mgr, relPath, routeErr := b.managerForFile(path)
+	if routeErr != nil {
+		b.content = fmt.Sprintf("(error selecting file: %v)", routeErr)
+		b.history = nil
+		b.historyErr = routeErr.Error()
+		b.historyDiff = ""
+		b.refreshViewportContent(true)
+		return
+	}
+	body, err := mgr.Read(relPath)
 	if err != nil {
 		b.content = fmt.Sprintf("(error reading file: %v)", err)
-		b.viewport.SetContent(b.content)
-		b.viewport.GotoTop()
+		b.history = nil
+		b.historyErr = ""
+		b.historyDiff = ""
+		b.refreshViewportContent(true)
 		return
 	}
 	b.content = body
-	b.viewport.SetContent(b.content)
-	b.viewport.GotoTop()
+	b.loadHistorySelected()
+	b.refreshViewportContent(true)
+}
+
+func (b *MemoryBrowser) loadHistorySelected() {
+	b.history = nil
+	b.historyErr = ""
+	b.historyDiff = ""
+	path := b.SelectedFile()
+	if path == "" {
+		return
+	}
+	mgr, relPath, err := b.managerForFile(path)
+	if err != nil {
+		b.historyErr = err.Error()
+		return
+	}
+	entries, err := mgr.HistoryWithBranch(relPath, b.historyLimit, b.historyBranch)
+	if err != nil {
+		b.historyErr = err.Error()
+		return
+	}
+	b.history = entries
+	if len(entries) > 0 && entries[0].ParentSHA != "" {
+		diff, diffErr := mgr.DiffRefs(entries[0].ParentSHA, entries[0].SHA, relPath)
+		if diffErr == nil {
+			b.historyDiff = truncateLines(strings.TrimSpace(diff), 28)
+		}
+	}
+}
+
+func (b *MemoryBrowser) refreshViewportContent(resetTop bool) {
+	if b.branchMode {
+		b.viewport.SetContent(b.renderBranches())
+	} else if b.showHistory {
+		b.viewport.SetContent(b.renderHistory())
+	} else {
+		b.viewport.SetContent(b.content)
+	}
+	if resetTop {
+		b.viewport.GotoTop()
+	}
+}
+
+func (b *MemoryBrowser) renderHistory() string {
+	path := b.SelectedFile()
+	mgr := b.mgr
+	if path != "" {
+		if scopedMgr, _, err := b.managerForFile(path); err == nil && scopedMgr != nil {
+			mgr = scopedMgr
+		}
+	}
+	if mgr == nil || !mgr.GitEnabled() {
+		return "Git versioning is disabled for memory."
+	}
+	if b.historyErr != "" {
+		return fmt.Sprintf("(error loading history: %s)", b.historyErr)
+	}
+	if len(b.history) == 0 {
+		return "(no git history for this file yet)"
+	}
+
+	var sb strings.Builder
+	if b.historyBranch != "" {
+		sb.WriteString(fmt.Sprintf("branch filter: %s\n\n", b.historyBranch))
+	}
+	for _, entry := range b.history {
+		sha := entry.SHA
+		if len(sha) > 7 {
+			sha = sha[:7]
+		}
+		ts := entry.Date
+		if t, err := time.Parse(time.RFC3339, entry.Date); err == nil {
+			ts = t.Format("2006-01-02 15:04")
+		}
+		extra := ""
+		if entry.AuthorName != "" {
+			extra += " by " + entry.AuthorName
+		}
+		if entry.Additions > 0 || entry.Deletions > 0 {
+			extra += fmt.Sprintf(" (+%d/-%d)", entry.Additions, entry.Deletions)
+		}
+		if entry.Branch != "" {
+			extra += " [" + entry.Branch + "]"
+		}
+		sb.WriteString(fmt.Sprintf("%s  %s  %s%s\n", ts, sha, entry.Message, extra))
+	}
+	if b.historyDiff != "" {
+		sb.WriteString("\n---\nlatest diff preview:\n")
+		sb.WriteString(b.historyDiff)
+	}
+	return strings.TrimSpace(sb.String())
 }
 
 // ScrollUp scrolls the content pane up by n lines.
@@ -374,24 +562,333 @@ func (b *MemoryBrowser) refreshFileList() {
 	if treeErr == nil {
 		for _, t := range tree {
 			files = append(files, memoryFile{
-				Path:        t.Path,
-				Description: t.Description,
-				IsSystem:    t.IsSystem,
-				SizeBytes:   t.SizeBytes,
-				UpdatedAt:   mtimeMap[t.Path],
+				Path:           t.Path,
+				Description:    t.Description,
+				IsSystem:       t.IsSystem,
+				SizeBytes:      t.SizeBytes,
+				UpdatedAt:      mtimeMap[t.Path],
+				HistoryCommits: 0,
+				HistoryBranch:  "",
 			})
 		}
 	} else {
 		// Fallback to flat list if tree fails.
 		for _, f := range list {
 			files = append(files, memoryFile{
-				Path:      f.Path,
-				SizeBytes: f.SizeBytes,
-				UpdatedAt: f.UpdatedAt,
+				Path:           f.Path,
+				SizeBytes:      f.SizeBytes,
+				UpdatedAt:      f.UpdatedAt,
+				HistoryCommits: 0,
+				HistoryBranch:  "",
 			})
 		}
 	}
+
+	// Fill git branch info and per-file history counts when git versioning is enabled.
+	b.gitCurrentBranch = ""
+	b.gitBranches = nil
+	if b.mgr.GitEnabled() {
+		if info, err := b.mgr.GitBranchInfo(); err == nil {
+			b.gitCurrentBranch = info.Current
+			b.gitBranches = info.All
+		}
+
+		commitCountByPath := map[string]int{}
+		branchHintByPath := map[string]string{}
+		mergeHistory := func(prefix string, mgr *memory.Manager) {
+			if mgr == nil {
+				return
+			}
+			info, err := mgr.GitBranchInfo()
+			if err != nil {
+				return
+			}
+			defaultBranch := info.Default
+			defaultEntries, err := mgr.HistoryWithBranch("", 2000, defaultBranch)
+			if err != nil {
+				return
+			}
+			defaultSHAs := map[string]struct{}{}
+			for _, e := range defaultEntries {
+				defaultSHAs[e.SHA] = struct{}{}
+				seenInCommit := map[string]struct{}{}
+				for _, p := range e.Files {
+					if !strings.HasSuffix(strings.ToLower(p), ".md") {
+						continue
+					}
+					if _, ok := seenInCommit[p]; ok {
+						continue
+					}
+					seenInCommit[p] = struct{}{}
+					key := filepath.ToSlash(filepath.Join(prefix, p))
+					commitCountByPath[key]++
+				}
+			}
+			for _, br := range info.All {
+				if br == defaultBranch {
+					continue
+				}
+				entries, historyErr := mgr.HistoryWithBranch("", 2000, br)
+				if historyErr != nil {
+					continue
+				}
+				for _, e := range entries {
+					if _, ok := defaultSHAs[e.SHA]; ok {
+						continue
+					}
+					seenInCommit := map[string]struct{}{}
+					for _, p := range e.Files {
+						if !strings.HasSuffix(strings.ToLower(p), ".md") {
+							continue
+						}
+						if _, ok := seenInCommit[p]; ok {
+							continue
+						}
+						seenInCommit[p] = struct{}{}
+						key := filepath.ToSlash(filepath.Join(prefix, p))
+						commitCountByPath[key]++
+						if branchHintByPath[key] == "" {
+							branchHintByPath[key] = br
+						}
+					}
+				}
+			}
+		}
+
+		mergeHistory("", b.mgr)
+
+		repoSlugs := map[string]struct{}{}
+		for _, f := range files {
+			if slug, _, ok := parseRepoMemoryPath(f.Path); ok {
+				repoSlugs[slug] = struct{}{}
+			}
+		}
+		for slug := range repoSlugs {
+			repoMgr, repoErr := b.repoManager(slug)
+			if repoErr != nil {
+				continue
+			}
+			mergeHistory(filepath.ToSlash(filepath.Join("repos", slug)), repoMgr)
+		}
+
+		for i := range files {
+			pathKey := filepath.ToSlash(files[i].Path)
+			files[i].HistoryCommits = commitCountByPath[pathKey]
+			files[i].HistoryBranch = branchHintByPath[pathKey]
+		}
+	}
 	b.files = files
+}
+
+func (b *MemoryBrowser) repoManager(slug string) (*memory.Manager, error) {
+	if slug == "" {
+		return nil, fmt.Errorf("empty repo slug")
+	}
+	if mgr, ok := b.repoMgrs[slug]; ok && mgr != nil {
+		return mgr, nil
+	}
+	repoDir := filepath.Join(b.mgr.Dir(), "repos", slug)
+	mgr, err := memory.NewManagerWithOptions(repoDir, nil, memory.ManagerOptions{
+		GitEnabled: b.mgr.GitEnabled(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	b.repoMgrs[slug] = mgr
+	return mgr, nil
+}
+
+func parseRepoMemoryPath(path string) (slug, rel string, ok bool) {
+	clean := filepath.ToSlash(filepath.Clean(path))
+	if !strings.HasPrefix(clean, "repos/") {
+		return "", "", false
+	}
+	rest := strings.TrimPrefix(clean, "repos/")
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
+func (b *MemoryBrowser) managerForFile(path string) (*memory.Manager, string, error) {
+	if slug, rel, ok := parseRepoMemoryPath(path); ok {
+		repoMgr, err := b.repoManager(slug)
+		if err != nil {
+			return nil, "", err
+		}
+		return repoMgr, rel, nil
+	}
+	return b.mgr, path, nil
+}
+
+func (b *MemoryBrowser) cycleHistoryBranchFilter() {
+	mgr := b.mgr
+	if path := b.SelectedFile(); path != "" {
+		if scopedMgr, _, err := b.managerForFile(path); err == nil && scopedMgr != nil {
+			mgr = scopedMgr
+		}
+	}
+	if mgr == nil || !mgr.GitEnabled() {
+		return
+	}
+	info, err := mgr.GitBranchInfo()
+	if err != nil || len(info.All) == 0 {
+		return
+	}
+
+	options := []string{""}
+	options = append(options, info.All...)
+	idx := 0
+	for i := range options {
+		if options[i] == b.historyBranch {
+			idx = i
+			break
+		}
+	}
+	idx = (idx + 1) % len(options)
+	b.historyBranch = options[idx]
+	b.loadHistorySelected()
+}
+
+func (b *MemoryBrowser) branchOptions() (*memory.Manager, []string, memory.GitBranchInfo) {
+	path := b.SelectedFile()
+	mgr := b.mgr
+	if path != "" {
+		if scopedMgr, _, err := b.managerForFile(path); err == nil && scopedMgr != nil {
+			mgr = scopedMgr
+		}
+	}
+	if mgr == nil || !mgr.GitEnabled() {
+		return nil, nil, memory.GitBranchInfo{}
+	}
+	info, err := mgr.GitBranchInfo()
+	if err != nil {
+		return mgr, nil, memory.GitBranchInfo{}
+	}
+	options := make([]string, len(info.All))
+	copy(options, info.All)
+	sort.Strings(options)
+	if b.branchSelected >= len(options) {
+		b.branchSelected = browserMax(0, len(options)-1)
+	}
+	return mgr, options, info
+}
+
+func (b *MemoryBrowser) createBranchFromSelection() {
+	mgr, options, info := b.branchOptions()
+	if mgr == nil || len(options) == 0 {
+		b.branchStatusMsg = "No branches available."
+		b.refreshViewportContent(true)
+		return
+	}
+	fromRef := info.Default
+	if fromRef == "" {
+		fromRef = options[b.branchSelected]
+	}
+	name := fmt.Sprintf("memory/%s", time.Now().Format("20060102-150405"))
+	if err := mgr.CreateBranch(name, fromRef); err != nil {
+		b.branchStatusMsg = "Create failed: " + err.Error()
+	} else {
+		b.branchStatusMsg = fmt.Sprintf("Created %s from %s.", name, fromRef)
+		b.refreshFileList()
+	}
+	b.refreshViewportContent(true)
+}
+
+func (b *MemoryBrowser) deleteSelectedBranch() {
+	mgr, options, info := b.branchOptions()
+	if mgr == nil || len(options) == 0 {
+		b.branchStatusMsg = "No branches available."
+		b.refreshViewportContent(true)
+		return
+	}
+	name := options[b.branchSelected]
+	if name == info.Default {
+		b.branchStatusMsg = "Refusing to delete default branch."
+		b.refreshViewportContent(true)
+		return
+	}
+	if name == info.Current {
+		b.branchStatusMsg = "Refusing to delete current branch."
+		b.refreshViewportContent(true)
+		return
+	}
+	if err := mgr.DeleteBranch(name, false); err != nil {
+		b.branchStatusMsg = "Delete failed: " + err.Error()
+	} else {
+		b.branchStatusMsg = fmt.Sprintf("Deleted branch %s.", name)
+		b.refreshFileList()
+	}
+	b.refreshViewportContent(true)
+}
+
+func (b *MemoryBrowser) mergeSelectedBranch() {
+	mgr, options, info := b.branchOptions()
+	if mgr == nil || len(options) == 0 {
+		b.branchStatusMsg = "No branches available."
+		b.refreshViewportContent(true)
+		return
+	}
+	source := options[b.branchSelected]
+	target := info.Default
+	if target == "" {
+		target = info.Current
+	}
+	if source == target {
+		b.branchStatusMsg = "Source equals target branch."
+		b.refreshViewportContent(true)
+		return
+	}
+	if err := mgr.MergeBranch(source, target, "ff-only"); err != nil {
+		b.branchStatusMsg = "Merge failed: " + err.Error()
+	} else {
+		b.branchStatusMsg = fmt.Sprintf("Merged %s -> %s.", source, target)
+		b.refreshFileList()
+		b.loadSelected()
+	}
+	b.refreshViewportContent(true)
+}
+
+func (b *MemoryBrowser) renderBranches() string {
+	mgr, options, info := b.branchOptions()
+	if mgr == nil {
+		return "Git versioning is disabled for memory."
+	}
+	if len(options) == 0 {
+		return "(no branches)"
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("default: %s\ncurrent: %s\n\n", info.Default, info.Current))
+	for i, name := range options {
+		prefix := "  "
+		if i == b.branchSelected {
+			prefix = "> "
+		}
+		meta := ""
+		if name == info.Default {
+			meta = " [default]"
+		} else if name == info.Current {
+			meta = " [current]"
+		}
+		sb.WriteString(prefix + name + meta + "\n")
+	}
+	if b.branchStatusMsg != "" {
+		sb.WriteString("\n---\n")
+		sb.WriteString(b.branchStatusMsg)
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+func truncateLines(text string, maxLines int) string {
+	if maxLines <= 0 {
+		return ""
+	}
+	lines := strings.Split(text, "\n")
+	if len(lines) <= maxLines {
+		return text
+	}
+	return strings.Join(lines[:maxLines], "\n") + "\n…"
 }
 
 // --- styles ---
@@ -450,7 +947,19 @@ func (b *MemoryBrowser) renderList(width int) string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(browserTitleStyle.Render("Memory Files") + "\n\n")
+	listTitle := "Memory Files"
+	if b.mgr.GitEnabled() {
+		if b.gitCurrentBranch != "" {
+			if len(b.gitBranches) > 1 {
+				listTitle = fmt.Sprintf("Memory Files (branch: %s, %d branches)", b.gitCurrentBranch, len(b.gitBranches))
+			} else {
+				listTitle = fmt.Sprintf("Memory Files (branch: %s)", b.gitCurrentBranch)
+			}
+		} else {
+			listTitle = "Memory Files (git)"
+		}
+	}
+	sb.WriteString(browserTitleStyle.Render(listTitle) + "\n\n")
 
 	if len(b.files) == 0 {
 		sb.WriteString(browserFileMtimeStyle.Render("(no memory files)"))
@@ -468,9 +977,16 @@ func (b *MemoryBrowser) renderList(width int) string {
 		if f.UpdatedAt > 0 {
 			mtime = time.UnixMilli(f.UpdatedAt).Format("Jan 02")
 		}
+		meta := mtime
+		if b.mgr.GitEnabled() {
+			if meta != "" {
+				meta += " "
+			}
+			meta += fmt.Sprintf("c:%d", f.HistoryCommits)
+		}
 
 		// Truncate name to fit.
-		maxName := innerW - len(prefix) - len(mtime) - 2
+		maxName := innerW - len(prefix) - len(meta) - 2
 		if maxName < 4 {
 			maxName = 4
 		}
@@ -478,11 +994,11 @@ func (b *MemoryBrowser) renderList(width int) string {
 			name = name[:maxName-1] + "…"
 		}
 
-		padding := innerW - len(prefix) - len(name) - len(mtime)
+		padding := innerW - len(prefix) - len(name) - len(meta)
 		if padding < 1 {
 			padding = 1
 		}
-		line := prefix + name + strings.Repeat(" ", padding) + mtime
+		line := prefix + name + strings.Repeat(" ", padding) + meta
 
 		if i == b.selectedIdx {
 			sb.WriteString(browserSelectedFileStyle.Width(innerW).Render(line) + "\n")
@@ -525,6 +1041,12 @@ func (b *MemoryBrowser) renderContent(width int) string {
 	sel := b.selectedFile()
 	if sel != nil && sel.IsSystem {
 		title = "\U0001F4CC " + title // 📌
+	}
+	if b.showHistory {
+		title += " [history]"
+	}
+	if b.branchMode {
+		title += " [branches]"
 	}
 	if b.editing {
 		title += " [editing]"
@@ -573,9 +1095,9 @@ func (b *MemoryBrowser) renderHint() string {
 	}
 	sel := b.selectedFile()
 	if sel != nil && sel.IsSystem {
-		return browserHintStyle.Render("  [e] edit  [u] unpin  [d] delete  [tab] switch pane  [esc] close")
+		return browserHintStyle.Render("  [h] history/content  [e] edit  [u] unpin  [d] delete  [tab] switch pane  [esc] close")
 	}
-	return browserHintStyle.Render("  [e] edit  [p] pin  [d] delete  [tab] switch pane  [esc] close")
+	return browserHintStyle.Render("  [h] history/content  [e] edit  [p] pin  [d] delete  [tab] switch pane  [esc] close")
 }
 
 func browserMax(a, b int) int {

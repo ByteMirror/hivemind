@@ -250,12 +250,14 @@ func TestMemoryConfig_DefaultsToEnabled(t *testing.T) {
 }
 
 func TestMemoryConfig_JSONRoundtrip(t *testing.T) {
+	falseVal := false
 	cfg := &Config{
 		Memory: &MemoryConfig{
 			Enabled:            true,
 			EmbeddingProvider:  "openai",
 			OpenAIAPIKey:       "sk-test",
 			StartupInjectCount: 5,
+			GitEnabled:         &falseVal,
 		},
 	}
 	data, err := json.Marshal(cfg)
@@ -266,4 +268,6 @@ func TestMemoryConfig_JSONRoundtrip(t *testing.T) {
 	require.NotNil(t, got.Memory)
 	assert.Equal(t, "openai", got.Memory.EmbeddingProvider)
 	assert.Equal(t, "sk-test", got.Memory.OpenAIAPIKey)
+	require.NotNil(t, got.Memory.GitEnabled)
+	assert.False(t, *got.Memory.GitEnabled)
 }

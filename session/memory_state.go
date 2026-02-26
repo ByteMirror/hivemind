@@ -124,6 +124,42 @@ func GetOrCreateRepoManager(slug string) (*memory.Manager, error) {
 	return mgr, nil
 }
 
+// GetRepoManagersForPaths returns the canonical repo manager and, when in
+// transition mode, a legacy repo manager for read-merge.
+// Canonical slug is derived from repoPath; legacy slug is derived from
+// worktreePath (historic behavior).
+func GetRepoManagersForPaths(repoPath, worktreePath string) (repoMgr *memory.Manager, legacyRepoMgr *memory.Manager, repoSlug string, err error) {
+	memMu.RLock()
+	if globalMemMgr == nil {
+		memMu.RUnlock()
+		return nil, nil, "", nil
+	}
+	globalDir := globalMemMgr.Dir()
+	memMu.RUnlock()
+
+	res, err := memory.ResolveRepoStorePaths(globalDir, repoPath, worktreePath)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	if res.CanonicalSlug == "" {
+		return nil, nil, "", nil
+	}
+
+	repoMgr, err = GetOrCreateRepoManager(res.CanonicalSlug)
+	if err != nil {
+		return nil, nil, "", err
+	}
+
+	if res.LegacyPath != "" && res.LegacySlug != "" && res.LegacySlug != res.CanonicalSlug {
+		legacyRepoMgr, err = GetOrCreateRepoManager(res.LegacySlug)
+		if err != nil {
+			return nil, nil, "", err
+		}
+	}
+
+	return repoMgr, legacyRepoMgr, res.CanonicalSlug, nil
+}
+
 // CloseAllRepoManagers closes and removes all per-repo memory managers.
 // Should be called on TUI shutdown.
 func CloseAllRepoManagers() {

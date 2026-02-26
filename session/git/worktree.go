@@ -36,11 +36,18 @@ type GitWorktree struct {
 
 func NewGitWorktreeFromStorage(repoPath string, worktreePath string, sessionName string, branchName string, baseCommitSHA string) *GitWorktree {
 	cfg := config.LoadConfig()
+	safeBranch := branchName
+	if !isValidBranchName(safeBranch) {
+		safeBranch = makeSafeBranchName(cfg.BranchPrefix, sessionName)
+		if log.WarningLog != nil {
+			log.WarningLog.Printf("git worktree: invalid stored branch %q for session %q, using %q", branchName, sessionName, safeBranch)
+		}
+	}
 	return &GitWorktree{
 		repoPath:      repoPath,
 		worktreePath:  worktreePath,
 		sessionName:   sessionName,
-		branchName:    branchName,
+		branchName:    safeBranch,
 		baseCommitSHA: baseCommitSHA,
 		skipGitHooks:  cfg.ShouldSkipGitHooks(),
 	}
@@ -49,10 +56,7 @@ func NewGitWorktreeFromStorage(repoPath string, worktreePath string, sessionName
 // NewGitWorktree creates a new GitWorktree instance
 func NewGitWorktree(repoPath string, sessionName string) (tree *GitWorktree, branchname string, err error) {
 	cfg := config.LoadConfig()
-	branchName := fmt.Sprintf("%s%s", cfg.BranchPrefix, sessionName)
-	// Sanitize the final branch name to handle invalid characters from any source
-	// (e.g., backslashes from Windows domain usernames like DOMAIN\user)
-	branchName = sanitizeBranchName(branchName)
+	branchName := makeSafeBranchName(cfg.BranchPrefix, sessionName)
 
 	// Convert repoPath to absolute path
 	absPath, err := filepath.Abs(repoPath)

@@ -156,10 +156,8 @@ func (l *List) Kill() {
 	}
 	targetInstance := l.items[l.selectedIdx]
 
-	// Kill the tmux session
-	if err := targetInstance.Kill(); err != nil {
-		log.ErrorLog.Printf("could not kill instance: %v", err)
-	}
+	// Kill in background so delete flows never block the UI.
+	session.KillInstanceAsync(targetInstance)
 
 	// If you delete the last one in the list, select the previous one.
 	if l.selectedIdx == len(l.items)-1 {
@@ -188,9 +186,7 @@ func (l *List) Kill() {
 func (l *List) KillInstanceByTitle(title string) {
 	for i, inst := range l.allItems {
 		if inst.Title == title {
-			if err := inst.Kill(); err != nil {
-				log.ErrorLog.Printf("could not kill instance %s: %v", inst.Title, err)
-			}
+			session.KillInstanceAsync(inst)
 			repoName, err := inst.RepoName()
 			if err == nil {
 				l.rmRepo(repoName)
@@ -207,9 +203,7 @@ func (l *List) KillInstancesByTopic(topicName string) {
 	var remaining []*session.Instance
 	for _, inst := range l.allItems {
 		if inst.TopicName == topicName {
-			if err := inst.Kill(); err != nil {
-				log.ErrorLog.Printf("could not kill instance %s: %v", inst.Title, err)
-			}
+			session.KillInstanceAsync(inst)
 			repoName, err := inst.RepoName()
 			if err == nil {
 				l.rmRepo(repoName)

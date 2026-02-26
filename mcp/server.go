@@ -122,7 +122,7 @@ user's environment, preferences, and project decisions.
 - memory_delete(path): Remove a file permanently.
 
 ### History and Maintenance
-- memory_history(path?, count?): View git log of memory changes. Omit path for all files.
+- memory_history(path?, scope?, count?): View git log of memory changes across global/repo memory.
 - memory_init: (Skill) Spawns a sub-agent to bootstrap memory from codebase analysis.
 - memory_reflect: (Skill) Spawns a sub-agent to review recent changes and consolidate insights.
 - memory_defrag: (Skill) Spawns a sub-agent to reorganize aging memory files.
@@ -182,18 +182,19 @@ user's environment, preferences, and project decisions.
 
 // HivemindMCPServer wraps an MCP server with Hivemind-specific state.
 type HivemindMCPServer struct {
-	server      *mcpserver.MCPServer
-	stateReader *StateReader
-	brainClient BrainClient
-	instanceID  string // used by Tier 2 introspection tools
-	repoPath    string // scopes brain and instance listing to this repo
-	tier        int    // gates tool registration: 1=read, 2=+introspect, 3=+write
-	memoryMgr    *memory.Manager
-	repoMemoryMgr *memory.Manager // scoped to the current repo (may be nil)
+	server           *mcpserver.MCPServer
+	stateReader      *StateReader
+	brainClient      BrainClient
+	instanceID       string // used by Tier 2 introspection tools
+	repoPath         string // scopes brain and instance listing to this repo
+	tier             int    // gates tool registration: 1=read, 2=+introspect, 3=+write
+	memoryMgr        *memory.Manager
+	repoMemoryMgr    *memory.Manager // canonical repo-scoped memory manager (may be nil)
+	legacyRepoMemMgr *memory.Manager // legacy worktree-slug repo manager during migration
 }
 
 // NewHivemindMCPServer creates a new MCP server for a Hivemind agent.
-func NewHivemindMCPServer(brainClient BrainClient, hivemindDir, instanceID, repoPath string, tier int, memMgr *memory.Manager, repoMemMgr *memory.Manager) *HivemindMCPServer {
+func NewHivemindMCPServer(brainClient BrainClient, hivemindDir, instanceID, repoPath string, tier int, memMgr *memory.Manager, repoMemMgr *memory.Manager, legacyRepoMemMgr *memory.Manager) *HivemindMCPServer {
 	s := mcpserver.NewMCPServer(
 		"hivemind",
 		"0.1.0",
@@ -201,14 +202,15 @@ func NewHivemindMCPServer(brainClient BrainClient, hivemindDir, instanceID, repo
 	)
 
 	h := &HivemindMCPServer{
-		server:      s,
-		stateReader: NewStateReader(hivemindDir),
-		brainClient: brainClient,
-		instanceID:    instanceID,
-		repoPath:      repoPath,
-		tier:          tier,
-		memoryMgr:     memMgr,
-		repoMemoryMgr: repoMemMgr,
+		server:           s,
+		stateReader:      NewStateReader(hivemindDir),
+		brainClient:      brainClient,
+		instanceID:       instanceID,
+		repoPath:         repoPath,
+		tier:             tier,
+		memoryMgr:        memMgr,
+		repoMemoryMgr:    repoMemMgr,
+		legacyRepoMemMgr: legacyRepoMemMgr,
 	}
 
 	h.registerTier1Tools()
@@ -233,6 +235,7 @@ func NewHivemindMCPServer(brainClient BrainClient, hivemindDir, instanceID, repo
 func (h *HivemindMCPServer) registerMemoryTools() {
 	mgr := h.memoryMgr
 	repoMgr := h.repoMemoryMgr
+	legacyRepoMgr := h.legacyRepoMemMgr
 
 	// --- Read-only tools ---
 
@@ -247,8 +250,11 @@ func (h *HivemindMCPServer) registerMemoryTools() {
 			gomcp.Required(),
 			gomcp.Description("Relative path within the memory store (e.g. \"system/global.md\", \"2025-01-15.md\")."),
 		),
+		gomcp.WithString("ref",
+			gomcp.Description("Optional git ref (branch, tag, or SHA). When set, reads file content from that ref."),
+		),
 	)
-	h.server.AddTool(memRead, handleMemoryRead(mgr))
+	h.server.AddTool(memRead, handleMemoryRead(mgr, repoMgr, legacyRepoMgr))
 
 	memSearch := gomcp.NewTool("memory_search",
 		gomcp.WithDescription(
@@ -265,7 +271,7 @@ func (h *HivemindMCPServer) registerMemoryTools() {
 			gomcp.Description("Maximum results to return (default 10)."),
 		),
 	)
-	h.server.AddTool(memSearch, handleMemorySearch(mgr, repoMgr))
+	h.server.AddTool(memSearch, handleMemorySearch(mgr, repoMgr, legacyRepoMgr))
 
 	memGet := gomcp.NewTool("memory_get",
 		gomcp.WithDescription(
@@ -283,14 +289,20 @@ func (h *HivemindMCPServer) registerMemoryTools() {
 		gomcp.WithNumber("lines",
 			gomcp.Description("Number of lines to read (default: entire file)."),
 		),
+		gomcp.WithString("ref",
+			gomcp.Description("Optional git ref (branch, tag, or SHA). When set, reads from that ref."),
+		),
 	)
-	h.server.AddTool(memGet, handleMemoryGet(mgr, repoMgr))
+	h.server.AddTool(memGet, handleMemoryGet(mgr, repoMgr, legacyRepoMgr))
 
 	memList := gomcp.NewTool("memory_list",
-		gomcp.WithDescription("List all IDE-wide memory files with metadata."),
+		gomcp.WithDescription("List all IDE-wide memory files with metadata. Optional ref lists files at a specific git ref."),
 		gomcp.WithReadOnlyHintAnnotation(true),
+		gomcp.WithString("ref",
+			gomcp.Description("Optional git ref (branch, tag, or SHA)."),
+		),
 	)
-	h.server.AddTool(memList, handleMemoryList(mgr, repoMgr))
+	h.server.AddTool(memList, handleMemoryList(mgr, repoMgr, legacyRepoMgr))
 
 	memTree := gomcp.NewTool("memory_tree",
 		gomcp.WithDescription(
@@ -299,24 +311,34 @@ func (h *HivemindMCPServer) registerMemoryTools() {
 				"Use this to understand the memory layout before reading or writing files.",
 		),
 		gomcp.WithReadOnlyHintAnnotation(true),
+		gomcp.WithString("ref",
+			gomcp.Description("Optional git ref (branch, tag, or SHA)."),
+		),
 	)
-	h.server.AddTool(memTree, handleMemoryTree(mgr))
+	h.server.AddTool(memTree, handleMemoryTree(mgr, repoMgr, legacyRepoMgr))
 
 	memHistory := gomcp.NewTool("memory_history",
 		gomcp.WithDescription(
 			"View the git history of memory changes. All memory writes are automatically committed. "+
 				"Omit path to see history across all files; provide a path to see changes to a specific file. "+
-				"Returns commit SHA, message, date, and affected files for each entry.",
+				"Use scope=\"global\", \"repo\", or \"all\" (default). "+
+				"Returns commit SHA, parent SHA, message, date, scope, author, branch, stats, and affected files for each entry.",
 		),
 		gomcp.WithReadOnlyHintAnnotation(true),
 		gomcp.WithString("path",
 			gomcp.Description("Filter history to a specific file (e.g. \"system/global.md\"). Omit for all files."),
 		),
+		gomcp.WithString("scope",
+			gomcp.Description("History scope: \"all\" (default), \"global\", or \"repo\"."),
+		),
 		gomcp.WithNumber("count",
 			gomcp.Description("Number of history entries to return (default 10)."),
 		),
+		gomcp.WithString("branch",
+			gomcp.Description("Optional branch/ref filter."),
+		),
 	)
-	h.server.AddTool(memHistory, handleMemoryHistory(mgr))
+	h.server.AddTool(memHistory, handleMemoryHistory(mgr, repoMgr, legacyRepoMgr))
 
 	// --- Write tools ---
 
@@ -345,6 +367,9 @@ func (h *HivemindMCPServer) registerMemoryTools() {
 		gomcp.WithString("commit_message",
 			gomcp.Description("Custom git commit message. If omitted, an automatic message is generated."),
 		),
+		gomcp.WithString("branch",
+			gomcp.Description("Optional branch to commit to. When omitted, writes to the default memory branch."),
+		),
 	)
 	h.server.AddTool(memWrite, handleMemoryWrite(mgr, repoMgr))
 
@@ -362,8 +387,11 @@ func (h *HivemindMCPServer) registerMemoryTools() {
 			gomcp.Required(),
 			gomcp.Description("Content to append to the end of the file."),
 		),
+		gomcp.WithString("branch",
+			gomcp.Description("Optional branch to commit to. When omitted, uses default memory branch."),
+		),
 	)
-	h.server.AddTool(memAppend, handleMemoryAppend(mgr))
+	h.server.AddTool(memAppend, handleMemoryAppend(mgr, repoMgr, legacyRepoMgr))
 
 	memMove := gomcp.NewTool("memory_move",
 		gomcp.WithDescription(
@@ -378,8 +406,11 @@ func (h *HivemindMCPServer) registerMemoryTools() {
 			gomcp.Required(),
 			gomcp.Description("New relative path. Parent directories are created automatically."),
 		),
+		gomcp.WithString("branch",
+			gomcp.Description("Optional branch to commit to. When omitted, uses default memory branch."),
+		),
 	)
-	h.server.AddTool(memMove, handleMemoryMove(mgr))
+	h.server.AddTool(memMove, handleMemoryMove(mgr, repoMgr, legacyRepoMgr))
 
 	memDelete := gomcp.NewTool("memory_delete",
 		gomcp.WithDescription("Delete a memory file permanently."),
@@ -387,8 +418,11 @@ func (h *HivemindMCPServer) registerMemoryTools() {
 			gomcp.Required(),
 			gomcp.Description("Relative path to delete."),
 		),
+		gomcp.WithString("branch",
+			gomcp.Description("Optional branch to commit to. When omitted, uses default memory branch."),
+		),
 	)
-	h.server.AddTool(memDelete, handleMemoryDelete(mgr))
+	h.server.AddTool(memDelete, handleMemoryDelete(mgr, repoMgr, legacyRepoMgr))
 
 	memPin := gomcp.NewTool("memory_pin",
 		gomcp.WithDescription(
@@ -401,8 +435,11 @@ func (h *HivemindMCPServer) registerMemoryTools() {
 			gomcp.Required(),
 			gomcp.Description("Relative path of the file to pin (e.g. \"conventions.md\" -> moves to \"system/conventions.md\")."),
 		),
+		gomcp.WithString("branch",
+			gomcp.Description("Optional branch to commit to. When omitted, uses default memory branch."),
+		),
 	)
-	h.server.AddTool(memPin, handleMemoryPin(mgr))
+	h.server.AddTool(memPin, handleMemoryPin(mgr, repoMgr, legacyRepoMgr))
 
 	memUnpin := gomcp.NewTool("memory_unpin",
 		gomcp.WithDescription(
@@ -414,8 +451,88 @@ func (h *HivemindMCPServer) registerMemoryTools() {
 			gomcp.Required(),
 			gomcp.Description("Relative path of the file in system/ to unpin (e.g. \"system/conventions.md\" -> moves to \"conventions.md\")."),
 		),
+		gomcp.WithString("branch",
+			gomcp.Description("Optional branch to commit to. When omitted, uses default memory branch."),
+		),
 	)
-	h.server.AddTool(memUnpin, handleMemoryUnpin(mgr))
+	h.server.AddTool(memUnpin, handleMemoryUnpin(mgr, repoMgr, legacyRepoMgr))
+
+	memBranches := gomcp.NewTool("memory_branches",
+		gomcp.WithDescription("List memory git branches with current/default branch info."),
+		gomcp.WithReadOnlyHintAnnotation(true),
+		gomcp.WithString("scope",
+			gomcp.Description("Branch scope: \"repo\" (default), \"global\", or \"all\"."),
+		),
+	)
+	h.server.AddTool(memBranches, handleMemoryBranches(mgr, repoMgr, legacyRepoMgr))
+
+	memBranchCreate := gomcp.NewTool("memory_branch_create",
+		gomcp.WithDescription("Create a memory git branch."),
+		gomcp.WithString("name",
+			gomcp.Required(),
+			gomcp.Description("New branch name."),
+		),
+		gomcp.WithString("from_ref",
+			gomcp.Description("Optional source ref. Default is the memory default branch."),
+		),
+		gomcp.WithString("scope",
+			gomcp.Description("Branch scope: \"repo\" (default) or \"global\"."),
+		),
+	)
+	h.server.AddTool(memBranchCreate, handleMemoryBranchCreate(mgr, repoMgr))
+
+	memBranchDelete := gomcp.NewTool("memory_branch_delete",
+		gomcp.WithDescription("Delete a memory git branch."),
+		gomcp.WithString("name",
+			gomcp.Required(),
+			gomcp.Description("Branch name to delete."),
+		),
+		gomcp.WithBoolean("force",
+			gomcp.Description("Force delete (uses -D)."),
+		),
+		gomcp.WithString("scope",
+			gomcp.Description("Branch scope: \"repo\" (default) or \"global\"."),
+		),
+	)
+	h.server.AddTool(memBranchDelete, handleMemoryBranchDelete(mgr, repoMgr))
+
+	memBranchMerge := gomcp.NewTool("memory_branch_merge",
+		gomcp.WithDescription("Merge a source branch into a target branch in memory git."),
+		gomcp.WithString("source",
+			gomcp.Required(),
+			gomcp.Description("Source branch/ref to merge from."),
+		),
+		gomcp.WithString("target",
+			gomcp.Description("Target branch/ref. Defaults to the memory default branch."),
+		),
+		gomcp.WithString("strategy",
+			gomcp.Description("Merge strategy: \"ff-only\" (default) or \"no-ff\"."),
+		),
+		gomcp.WithString("scope",
+			gomcp.Description("Branch scope: \"repo\" (default) or \"global\"."),
+		),
+	)
+	h.server.AddTool(memBranchMerge, handleMemoryBranchMerge(mgr, repoMgr))
+
+	memDiff := gomcp.NewTool("memory_diff",
+		gomcp.WithDescription("Show git diff between two refs in memory git."),
+		gomcp.WithReadOnlyHintAnnotation(true),
+		gomcp.WithString("base_ref",
+			gomcp.Required(),
+			gomcp.Description("Base ref for diff."),
+		),
+		gomcp.WithString("head_ref",
+			gomcp.Required(),
+			gomcp.Description("Head ref for diff."),
+		),
+		gomcp.WithString("path",
+			gomcp.Description("Optional file path filter."),
+		),
+		gomcp.WithString("scope",
+			gomcp.Description("Diff scope: \"repo\" (default) or \"global\"."),
+		),
+	)
+	h.server.AddTool(memDiff, handleMemoryDiff(mgr, repoMgr, legacyRepoMgr))
 }
 
 // registerMemorySkills registers subagent-based memory maintenance skills (Tier 3 only).

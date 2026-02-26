@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/ByteMirror/hivemind/brain"
 	"github.com/ByteMirror/hivemind/log"
@@ -96,6 +95,7 @@ func (m *home) handleActionCreateInstance(action brain.ActionRequest) (tea.Model
 		Role:            role,
 		ParentTitle:     sourceInstance,
 		AutomationID:    automationID,
+		InitialPrompt:   prompt,
 	})
 	if err != nil {
 		action.ResponseCh <- brain.ActionResponse{Error: "failed to create instance: " + err.Error()}
@@ -135,14 +135,6 @@ func (m *home) handleActionCreateInstance(action brain.ActionRequest) (tea.Model
 		if startErr != nil {
 			responseCh <- brain.ActionResponse{Error: "failed to start instance: " + startErr.Error()}
 			return brainInstanceFailedMsg{title: instance.Title, err: startErr}
-		}
-
-		// Send initial prompt if provided.
-		if prompt != "" {
-			instance.WaitForReady(30 * time.Second)
-			if err := instance.SendPrompt(prompt); err != nil {
-				log.ErrorLog.Printf("brain: failed to send prompt to %q: %v", instance.Title, err)
-			}
 		}
 
 		responseCh <- brain.ActionResponse{

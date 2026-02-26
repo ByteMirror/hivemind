@@ -396,4 +396,12 @@ func (m *home) restartMemoryManager() {
 		sysBudget = m.appConfig.Memory.SystemBudgetChars
 	}
 	session.SetMemoryManager(mgr, injectCount, sysBudget)
+	session.SetMemoryFactory(buildRepoMemoryFactory(m.appConfig))
+}
+
+func buildRepoMemoryFactory(cfg *config.Config) func(dir string) (*memory.Manager, error) {
+	gitEnabled := memory.GitEnabledFromConfig(cfg)
+	return func(dir string) (*memory.Manager, error) {
+		return memory.NewManagerWithOptions(dir, nil, memory.ManagerOptions{GitEnabled: gitEnabled})
+	}
 }

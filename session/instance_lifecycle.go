@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"time"
 
 	"github.com/ByteMirror/hivemind/log"
@@ -43,6 +42,9 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 	}
 	tmuxSession.ProgressFunc = func(stage int, desc string) {
 		i.setLoadingProgress(tmuxStageOffset+stage, desc)
+	}
+	if i.InitialPrompt != "" && isClaudeProgram(i.Program) {
+		tmuxSession.AppendArgs = append(tmuxSession.AppendArgs, "-p", i.InitialPrompt)
 	}
 	i.tmuxSession = tmuxSession
 
@@ -99,9 +101,9 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 		if memMgr := getMemoryManager(); memMgr != nil {
 			wtPath := i.gitWorktree.GetWorktreePath()
 			count := getMemoryInjectCount()
-			repoMgr, _ := GetOrCreateRepoManager(filepath.Base(wtPath))
+			repoMgr, legacyRepoMgr, repoSlug, _ := GetRepoManagersForPaths(i.Path, wtPath)
 			go func() {
-				if err := InjectMemoryContext(wtPath, memMgr, repoMgr, count); err != nil {
+				if err := InjectMemoryContextForRepo(wtPath, repoSlug, memMgr, repoMgr, legacyRepoMgr, count); err != nil {
 					log.WarningLog.Printf("memory inject: %v", err)
 				}
 			}()
@@ -187,9 +189,9 @@ func (i *Instance) StartInSharedWorktree(worktree *git.GitWorktree, branch strin
 	if memMgr := getMemoryManager(); memMgr != nil {
 		sharedWtPath := worktree.GetWorktreePath()
 		count := getMemoryInjectCount()
-		repoMgr, _ := GetOrCreateRepoManager(filepath.Base(sharedWtPath))
+		repoMgr, legacyRepoMgr, repoSlug, _ := GetRepoManagersForPaths(i.Path, sharedWtPath)
 		go func() {
-			if err := InjectMemoryContext(sharedWtPath, memMgr, repoMgr, count); err != nil {
+			if err := InjectMemoryContextForRepo(sharedWtPath, repoSlug, memMgr, repoMgr, legacyRepoMgr, count); err != nil {
 				log.WarningLog.Printf("memory inject: %v", err)
 			}
 		}()
@@ -272,13 +274,20 @@ func (i *Instance) Kill() error {
 	// If memory is configured, send a final prompt asking the agent to persist
 	// session learnings before we terminate. This is fire-and-forget — if it
 	// fails, we log and continue with the kill.
+	promptSent := false
 	if getMemoryManager() != nil {
-		if err := SendMemoryAutoWritePrompt(i); err != nil {
+		sent, err := SendMemoryAutoWritePrompt(i)
+		promptSent = sent
+		if err != nil {
 			log.WarningLog.Printf("memory-autosave[%s]: failed to send auto-write prompt: %v", i.Title, err)
-		} else {
+		}
+		if sent {
 			// Give the agent a moment to write before we terminate.
 			time.Sleep(memoryAutoWriteKillWait)
 		}
+	}
+	if log.InfoLog != nil {
+		log.InfoLog.Printf("memory-autosave[%s]: prompt_sent=%t", i.Title, promptSent)
 	}
 
 	var errs []error
@@ -429,9 +438,9 @@ func (i *Instance) Resume() error {
 	if memMgr := getMemoryManager(); memMgr != nil {
 		wtPath := i.gitWorktree.GetWorktreePath()
 		count := getMemoryInjectCount()
-		repoMgr, _ := GetOrCreateRepoManager(filepath.Base(wtPath))
+		repoMgr, legacyRepoMgr, repoSlug, _ := GetRepoManagersForPaths(i.Path, wtPath)
 		go func() {
-			if err := InjectMemoryContext(wtPath, memMgr, repoMgr, count); err != nil {
+			if err := InjectMemoryContextForRepo(wtPath, repoSlug, memMgr, repoMgr, legacyRepoMgr, count); err != nil {
 				log.WarningLog.Printf("memory inject: %v", err)
 			}
 		}()
@@ -474,5 +483,3 @@ func (i *Instance) Resume() error {
 	i.SetStatus(Running)
 	return nil
 }
-
-

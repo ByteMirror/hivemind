@@ -2,6 +2,7 @@ package git
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -11,9 +12,15 @@ import (
 func (g *GitWorktree) cleanupExistingBranch(repo *git.Repository) error {
 	branchRef := plumbing.NewBranchReferenceName(g.branchName)
 
-	// Try to remove the branch reference
+	// Try to remove the branch reference. go-git's RemoveReference deletes the
+	// ref file and then tries to prune empty parent directories. With namespaced
+	// branches (e.g. "user/task"), the parent directory may still contain sibling
+	// branches, causing a "directory not empty" error. This is harmless — the
+	// reference itself was already removed.
 	if err := repo.Storer.RemoveReference(branchRef); err != nil && err != plumbing.ErrReferenceNotFound {
-		return fmt.Errorf("failed to remove branch reference %s: %w", g.branchName, err)
+		if !strings.Contains(err.Error(), "directory not empty") {
+			return fmt.Errorf("failed to remove branch reference %s: %w", g.branchName, err)
+		}
 	}
 
 	// Remove any worktree-specific references
@@ -22,7 +29,9 @@ func (g *GitWorktree) cleanupExistingBranch(repo *git.Repository) error {
 		"",
 	)
 	if err := repo.Storer.RemoveReference(worktreeRef.Name()); err != nil && err != plumbing.ErrReferenceNotFound {
-		return fmt.Errorf("failed to remove worktree reference for %s: %w", g.branchName, err)
+		if !strings.Contains(err.Error(), "directory not empty") {
+			return fmt.Errorf("failed to remove worktree reference for %s: %w", g.branchName, err)
+		}
 	}
 
 	// Clean up configuration entries

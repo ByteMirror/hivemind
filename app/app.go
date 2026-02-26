@@ -214,7 +214,6 @@ type home struct {
 
 	// brainServer is the IPC server for coordinating brain state between MCP agents
 	brainServer *brain.Server
-
 }
 
 func newHome(ctx context.Context, program string, autoYes bool) *home {
@@ -234,6 +233,7 @@ func newHome(ctx context.Context, program string, autoYes bool) *home {
 			sysBudget = appConfig.Memory.SystemBudgetChars
 		}
 		session.SetMemoryManager(memMgr, injectCount, sysBudget)
+		session.SetMemoryFactory(buildRepoMemoryFactory(appConfig))
 		if stop, err := memMgr.StartWatcher(); err != nil {
 			log.WarningLog.Printf("memory watcher: %v", err)
 		} else {
@@ -583,6 +583,10 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case automationCheckMsg:
 		cmds := m.checkDueAutomations()
 		cmds = append(cmds, automationCheckCmd)
+		if len(cmds) > 1 {
+			// An automation was triggered and created a toast — start the tick loop.
+			cmds = append(cmds, m.toastTickCmd())
+		}
 		return m, tea.Batch(cmds...)
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
@@ -918,6 +922,7 @@ func (m *home) spawnAutomationInstance(auto *config.Automation) tea.Cmd {
 		Program:         m.program,
 		SkipPermissions: true,
 		AutomationID:    auto.ID,
+		InitialPrompt:   auto.Instructions,
 	})
 	if err != nil {
 		log.ErrorLog.Printf("automation %q: failed to create instance: %v", auto.Name, err)
@@ -927,7 +932,6 @@ func (m *home) spawnAutomationInstance(auto *config.Automation) tea.Cmd {
 	finalizer := m.list.AddInstance(instance)
 	m.toastManager.Info(fmt.Sprintf("Automation %q triggered", auto.Name))
 
-	prompt := auto.Instructions
 	brainSrv := m.brainServer
 	return func() tea.Msg {
 		if startErr := instance.Start(true); startErr != nil {
@@ -935,12 +939,6 @@ func (m *home) spawnAutomationInstance(auto *config.Automation) tea.Cmd {
 			return brainInstanceFailedMsg{title: instance.Title, err: startErr}
 		}
 		log.InfoLog.Printf("automation %q: instance %q started (automationID=%s)", auto.Name, instance.Title, auto.ID)
-		if prompt != "" {
-			instance.WaitForReady(30 * time.Second)
-			if err := instance.SendPrompt(prompt); err != nil {
-				log.ErrorLog.Printf("automation %q: failed to send prompt: %v", auto.Name, err)
-			}
-		}
 		if brainSrv != nil {
 			brainSrv.PushEvent(brain.Event{
 				Type:     brain.EventInstanceCreated,

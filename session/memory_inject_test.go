@@ -129,3 +129,30 @@ func TestInjectMemoryContext_BothSections(t *testing.T) {
 	assert.NotContains(t, s, "*(no global memory yet)*")
 	assert.NotContains(t, s, "*(no repo memory yet)*")
 }
+
+func TestInjectMemoryContextForRepo_MergesCanonicalAndLegacyRepoResults(t *testing.T) {
+	globalMgr, _ := newTestMemoryManager(t)
+	repoMgr, _ := newTestMemoryManager(t)
+	legacyRepoMgr, _ := newTestMemoryManager(t)
+
+	require.NoError(t, globalMgr.Write("global setup hardware: macOS", "global.md"))
+	require.NoError(t, repoMgr.Write("hivemind project architecture decisions: canonical repo data", "2026-02-26.md"))
+	require.NoError(t, legacyRepoMgr.Write("hivemind project architecture decisions: legacy repo data", "2026-02-25.md"))
+
+	wtDir := t.TempDir()
+	wtPath := filepath.Join(wtDir, "worktree-slug")
+	require.NoError(t, os.MkdirAll(wtPath, 0700))
+	claudeMD := filepath.Join(wtPath, "CLAUDE.md")
+	require.NoError(t, os.WriteFile(claudeMD, []byte("# Repo\n"), 0600))
+
+	err := InjectMemoryContextForRepo(wtPath, "hivemind", globalMgr, repoMgr, legacyRepoMgr, 5)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(claudeMD)
+	require.NoError(t, err)
+	s := string(data)
+
+	assert.Contains(t, s, "canonical repo data")
+	assert.Contains(t, s, "legacy repo data")
+	assert.Contains(t, s, "### Repo context (hivemind)")
+}

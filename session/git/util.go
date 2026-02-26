@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/go-git/go-git/v5"
 )
@@ -24,6 +25,73 @@ func sanitizeBranchName(s string) string {
 	s = multiDashRegex.ReplaceAllString(s, "-")
 	s = strings.Trim(s, "-/")
 	return s
+}
+
+// isValidBranchName performs a conservative validation for git branch names.
+// It intentionally rejects ambiguous or unsafe forms before we pass them to git.
+func isValidBranchName(s string) bool {
+	if s == "" || s == "@" {
+		return false
+	}
+	if strings.HasPrefix(s, "/") || strings.HasSuffix(s, "/") {
+		return false
+	}
+	if strings.Contains(s, "//") || strings.Contains(s, "..") || strings.Contains(s, "@{") {
+		return false
+	}
+	if strings.ContainsAny(s, " ~^:?*[\\'\"`") {
+		return false
+	}
+	parts := strings.Split(s, "/")
+	for _, p := range parts {
+		if p == "" || p == "." || p == ".." {
+			return false
+		}
+		if strings.HasPrefix(p, ".") || strings.HasSuffix(p, ".") {
+			return false
+		}
+		if strings.HasSuffix(p, ".lock") {
+			return false
+		}
+	}
+	return true
+}
+
+// makeSafeBranchName derives a valid branch name from prefix+sessionName.
+// It never returns an empty or invalid branch name.
+func makeSafeBranchName(prefix, sessionName string) string {
+	p := sanitizeBranchName(prefix)
+	p = strings.Trim(p, "-/")
+	if p != "" {
+		p += "/"
+	}
+
+	candidate := sanitizeBranchName(p + sessionName)
+	if isValidBranchName(candidate) {
+		return candidate
+	}
+
+	base := sanitizeBranchName(sessionName)
+	base = strings.Trim(base, "-/")
+	if base == "" {
+		base = "session"
+	}
+	suffix := fmt.Sprintf("%x", time.Now().UnixNano())
+
+	if p != "" {
+		candidate = p + base + "-" + suffix
+		if isValidBranchName(candidate) {
+			return candidate
+		}
+	}
+
+	candidate = "session/" + base + "-" + suffix
+	if isValidBranchName(candidate) {
+		return candidate
+	}
+
+	// Final fallback should always be valid.
+	return "session-" + suffix
 }
 
 // checkGHCLI checks if GitHub CLI is installed and configured

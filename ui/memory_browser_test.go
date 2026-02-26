@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/ByteMirror/hivemind/memory"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestMemoryBrowser_Navigation(t *testing.T) {
@@ -237,5 +238,146 @@ func TestMemoryBrowser_SystemFileIndicator(t *testing.T) {
 	}
 	if !found {
 		t.Error("system/conventions.md not found in file list")
+	}
+}
+
+func TestMemoryBrowser_GitMetadataAndHistoryToggle(t *testing.T) {
+	dir := t.TempDir()
+	mgr, err := memory.NewManager(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	if err := mgr.Write("first memory", "notes.md"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Write("second memory", "notes.md"); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := NewMemoryBrowser(mgr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if b.gitCurrentBranch == "" {
+		t.Fatal("expected git branch metadata to be loaded")
+	}
+	if len(b.gitBranches) == 0 {
+		t.Fatal("expected git branches to be loaded")
+	}
+
+	found := false
+	for _, f := range b.files {
+		if f.Path == "notes.md" {
+			found = true
+			if f.HistoryCommits < 1 {
+				t.Fatalf("expected notes.md to have history commits, got %d", f.HistoryCommits)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("notes.md not found in browser file list")
+	}
+
+	// Toggle history mode.
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}}
+	_, _ = b.HandleKeyPress(msg)
+	if !b.showHistory {
+		t.Fatal("expected history mode to be enabled")
+	}
+	if len(b.history) == 0 {
+		t.Fatal("expected selected file history entries")
+	}
+}
+
+func TestMemoryBrowser_HistoryToggleWithGitDisabled(t *testing.T) {
+	dir := t.TempDir()
+	mgr, err := memory.NewManagerWithOptions(dir, nil, memory.ManagerOptions{GitEnabled: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	if err := mgr.Write("note", "notes.md"); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := NewMemoryBrowser(mgr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.mgr.GitEnabled() {
+		t.Fatal("expected git to be disabled")
+	}
+
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}}
+	_, _ = b.HandleKeyPress(msg)
+	if !b.showHistory {
+		t.Fatal("expected history mode to toggle on")
+	}
+	if got := b.renderHistory(); got == "" {
+		t.Fatal("expected history placeholder text when git is disabled")
+	}
+}
+
+func TestMemoryBrowser_HistoryFromRepoScopedMemoryStore(t *testing.T) {
+	dir := t.TempDir()
+
+	globalMgr, err := memory.NewManager(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer globalMgr.Close()
+
+	repoDir := filepath.Join(dir, "repos", "hivemind")
+	repoMgr, err := memory.NewManager(repoDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repoMgr.Close()
+
+	if err := repoMgr.Write("first section", "smoke.md"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repoMgr.Write("second section", "smoke.md"); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := NewMemoryBrowser(globalMgr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+
+	target := filepath.ToSlash(filepath.Join("repos", "hivemind", "smoke.md"))
+	found := false
+	for i, f := range b.files {
+		if filepath.ToSlash(f.Path) == target {
+			b.selectedIdx = i
+			found = true
+			if f.HistoryCommits < 1 {
+				t.Fatalf("expected history commits for %s, got %d", target, f.HistoryCommits)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected %s in memory browser list", target)
+	}
+
+	// Reload selected file and toggle history.
+	b.loadSelected()
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}}
+	_, _ = b.HandleKeyPress(msg)
+	if !b.showHistory {
+		t.Fatal("expected history mode to be enabled")
+	}
+	if len(b.history) == 0 {
+		t.Fatal("expected repo-scoped history entries for selected file")
+	}
+	if got := b.renderHistory(); got == "(no git history for this file yet)" {
+		t.Fatalf("expected visible history for %s, got no-history placeholder", target)
 	}
 }

@@ -8,6 +8,15 @@ import (
 	"github.com/ByteMirror/hivemind/config"
 )
 
+// GitEnabledFromConfig returns whether memory git versioning should be enabled.
+// Defaults to true when unset.
+func GitEnabledFromConfig(cfg *config.Config) bool {
+	if cfg == nil || cfg.Memory == nil || cfg.Memory.GitEnabled == nil {
+		return true
+	}
+	return *cfg.Memory.GitEnabled
+}
+
 // NewManagerFromConfig creates a MemoryManager from the application config.
 // Returns (nil, nil) if memory is disabled or not configured.
 func NewManagerFromConfig(cfg *config.Config) (*Manager, error) {
@@ -34,7 +43,9 @@ func NewManagerFromConfig(cfg *config.Config) (*Manager, error) {
 		provider = &noopProvider{} // FTS-only
 	}
 
-	mgr, err := NewManager(memDir, provider)
+	mgr, err := NewManagerWithOptions(memDir, provider, ManagerOptions{
+		GitEnabled: GitEnabledFromConfig(cfg),
+	})
 	if err != nil {
 		return nil, err
 	}
