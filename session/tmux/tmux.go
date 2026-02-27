@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -108,7 +109,11 @@ func (t *TmuxSession) reportProgress(stage int, desc string) {
 
 // isClaudeProgram returns true if the program string refers to Claude Code.
 func isClaudeProgram(program string) bool {
-	return strings.HasSuffix(program, ProgramClaude)
+	parts := strings.Fields(program)
+	if len(parts) == 0 {
+		return false
+	}
+	return filepath.Base(parts[0]) == ProgramClaude
 }
 
 type statusMonitor struct {

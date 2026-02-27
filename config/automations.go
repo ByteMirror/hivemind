@@ -12,13 +12,17 @@ import (
 
 // Automation represents a scheduled agent task.
 type Automation struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Instructions string    `json:"instructions"`
-	Schedule     string    `json:"schedule"`
-	Enabled      bool      `json:"enabled"`
-	LastRun      time.Time `json:"last_run,omitempty"`
-	NextRun      time.Time `json:"next_run"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Instructions string `json:"instructions"`
+	// Program is the agent command used for automation runs (e.g. claude, codex).
+	Program string `json:"program,omitempty"`
+	// RepoPath is the repository path where this automation should run.
+	RepoPath string    `json:"repo_path,omitempty"`
+	Schedule string    `json:"schedule"`
+	Enabled  bool      `json:"enabled"`
+	LastRun  time.Time `json:"last_run,omitempty"`
+	NextRun  time.Time `json:"next_run"`
 }
 
 // scheduleSpec describes a parsed schedule.
@@ -112,7 +116,7 @@ func NextRunTime(schedule string, lastRun time.Time, now time.Time) (time.Time, 
 }
 
 // NewAutomation creates a new Automation with a generated ID and a computed NextRun.
-func NewAutomation(name, instructions, schedule string) (*Automation, error) {
+func NewAutomation(name, instructions, schedule, program, repoPath string) (*Automation, error) {
 	now := time.Now()
 	next, err := NextRunTime(schedule, time.Time{}, now)
 	if err != nil {
@@ -122,6 +126,8 @@ func NewAutomation(name, instructions, schedule string) (*Automation, error) {
 		ID:           fmt.Sprintf("auto-%d", now.UnixNano()),
 		Name:         name,
 		Instructions: instructions,
+		Program:      strings.TrimSpace(program),
+		RepoPath:     strings.TrimSpace(repoPath),
 		Schedule:     schedule,
 		Enabled:      true,
 		NextRun:      next,

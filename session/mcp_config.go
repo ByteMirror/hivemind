@@ -131,5 +131,9 @@ func findMCPBinary() (string, error) {
 // isClaudeProgram returns true if the program string refers to Claude Code.
 // This duplicates the unexported function in session/tmux to avoid exporting it.
 func isClaudeProgram(program string) bool {
-	return strings.HasSuffix(program, "claude")
+	parts := strings.Fields(program)
+	if len(parts) == 0 {
+		return false
+	}
+	return filepath.Base(parts[0]) == "claude"
 }

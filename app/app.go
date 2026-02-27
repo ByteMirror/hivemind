@@ -910,6 +910,8 @@ func (m *home) checkDueAutomations() []tea.Cmd {
 // Returns a tea.Cmd that starts the instance asynchronously, or nil on error.
 func (m *home) spawnAutomationInstance(auto *config.Automation) tea.Cmd {
 	title := fmt.Sprintf("%s-%d", auto.Name, time.Now().Unix())
+	program := m.resolveAutomationProgram(auto)
+	repoPath := m.resolveAutomationRepoPath(auto)
 
 	if m.findInstanceByTitle(title) != nil {
 		log.WarningLog.Printf("automation %q: duplicate title %q", auto.Name, title)
@@ -918,8 +920,8 @@ func (m *home) spawnAutomationInstance(auto *config.Automation) tea.Cmd {
 
 	instance, err := session.NewInstance(session.InstanceOptions{
 		Title:           title,
-		Path:            m.repoPathForNewInstance(),
-		Program:         m.program,
+		Path:            repoPath,
+		Program:         program,
 		SkipPermissions: true,
 		AutomationID:    auto.ID,
 		InitialPrompt:   auto.Instructions,

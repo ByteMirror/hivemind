@@ -172,6 +172,32 @@ func parseOptionalBoolArg(req gomcp.CallToolRequest, key string, fallback bool) 
 	return fallback
 }
 
+func missingParamErr(param, example string) *gomcp.CallToolResult {
+	msg := "missing required parameter: " + param
+	if strings.TrimSpace(example) != "" {
+		msg += ". Example: " + example
+	}
+	return gomcp.NewToolResultError(msg)
+}
+
+func toolErrWithHint(prefix string, err error, hint string) *gomcp.CallToolResult {
+	msg := prefix
+	if err != nil {
+		msg += ": " + err.Error()
+	}
+	if strings.TrimSpace(hint) != "" {
+		msg += " Hint: " + hint
+	}
+	return gomcp.NewToolResultError(msg)
+}
+
+func readPathHint(ref string) string {
+	if strings.TrimSpace(ref) != "" {
+		return `Verify the ref with memory_branches(scope="repo"), then retry memory_read(path="...", ref="...").`
+	}
+	return `Use memory_tree() to discover paths. Use path="repos/<repo-slug>/file.md" to target repo memory explicitly.`
+}
+
 // handleMemoryWrite saves a fact to the IDE-wide memory store.
 // scope="global" writes to globalMgr (defaulting to system/global.md); scope="repo" (or dated filenames) writes to repoMgr.
 func handleMemoryWrite(globalMgr *memory.Manager, repoMgr *memory.Manager) mcpserver.ToolHandlerFunc {
@@ -183,7 +209,7 @@ func handleMemoryWrite(globalMgr *memory.Manager, repoMgr *memory.Manager) mcpse
 		commitMessage := req.GetString("commit_message", "")
 		branch := req.GetString("branch", "")
 		if content == "" {
-			return gomcp.NewToolResultError("missing required parameter: content"), nil
+			return missingParamErr("content", `memory_write(content="Remember X", scope="repo", file="notes.md")`), nil
 		}
 
 		mgr := resolveMemoryScope(scope, file, globalMgr, repoMgr)
@@ -193,7 +219,11 @@ func handleMemoryWrite(globalMgr *memory.Manager, repoMgr *memory.Manager) mcpse
 
 		if err := mgr.WriteWithCommitMessageOnBranch(content, file, commitMessage, branch); err != nil {
 			Log("memory_write error: %v", err)
-			return gomcp.NewToolResultError("failed to write memory: " + err.Error()), nil
+			return toolErrWithHint(
+				"failed to write memory",
+				err,
+				`Use "file" for write target. For existing files, use path-based tools like memory_read/memory_get/memory_append.`,
+			), nil
 		}
 		Log("memory_write: saved %d chars scope=%q file=%q branch=%q", len(content), scope, file, branch)
 		return gomcp.NewToolResultText("Memory saved."), nil
@@ -206,7 +236,7 @@ func handleMemoryRead(globalMgr *memory.Manager, repoMgr *memory.Manager, legacy
 		Log("tool call: memory_read")
 		relPath := req.GetString("path", "")
 		if relPath == "" {
-			return gomcp.NewToolResultError("missing required parameter: path"), nil
+			return missingParamErr("path", `memory_read(path="system/global.md")`), nil
 		}
 		ref := req.GetString("ref", "")
 
@@ -230,14 +260,14 @@ func handleMemoryRead(globalMgr *memory.Manager, repoMgr *memory.Manager, legacy
 			}
 			lastErr = err
 			if i == len(candidates)-1 || !shouldTryRepoFallback(err) {
-				return gomcp.NewToolResultError("failed to read memory file: " + err.Error()), nil
+				return toolErrWithHint("failed to read memory file", err, readPathHint(ref)), nil
 			}
 		}
 
 		if lastErr == nil {
-			return gomcp.NewToolResultError("failed to read memory file: no memory manager available"), nil
+			return toolErrWithHint("failed to read memory file", nil, readPathHint(ref)), nil
 		}
-		return gomcp.NewToolResultError("failed to read memory file: " + lastErr.Error()), nil
+		return toolErrWithHint("failed to read memory file", lastErr, readPathHint(ref)), nil
 	}
 }
 
@@ -249,7 +279,7 @@ func handleMemorySearch(globalMgr *memory.Manager, repoMgr *memory.Manager, lega
 		Log("tool call: memory_search")
 		query := req.GetString("query", "")
 		if query == "" {
-			return gomcp.NewToolResultError("missing required parameter: query"), nil
+			return missingParamErr("query", `memory_search(query="commit message conventions")`), nil
 		}
 
 		maxResults := parseOptionalIntArg(req, "max_results", 10)
@@ -257,7 +287,7 @@ func handleMemorySearch(globalMgr *memory.Manager, repoMgr *memory.Manager, lega
 		globalResults, err := globalMgr.Search(query, memory.SearchOpts{MaxResults: maxResults})
 		if err != nil {
 			Log("memory_search global error: %v", err)
-			return gomcp.NewToolResultError("search failed: " + err.Error()), nil
+			return toolErrWithHint("search failed", err, `Retry with a shorter keyword query, e.g. memory_search(query="conventions").`), nil
 		}
 
 		var combined []memory.SearchResult
@@ -313,7 +343,7 @@ func handleMemoryGet(globalMgr *memory.Manager, repoMgr *memory.Manager, legacyR
 		Log("tool call: memory_get")
 		relPath := req.GetString("path", "")
 		if relPath == "" {
-			return gomcp.NewToolResultError("missing required parameter: path"), nil
+			return missingParamErr("path", `memory_get(path="system/global.md", from=1, lines=20)`), nil
 		}
 		from := parseOptionalIntArg(req, "from", 0)
 		lines := parseOptionalIntArg(req, "lines", 0)
@@ -339,14 +369,14 @@ func handleMemoryGet(globalMgr *memory.Manager, repoMgr *memory.Manager, legacyR
 			}
 			lastErr = err
 			if i == len(candidates)-1 || !shouldTryRepoFallback(err) {
-				return gomcp.NewToolResultError("failed to read memory file: " + err.Error()), nil
+				return toolErrWithHint("failed to read memory file", err, readPathHint(ref)), nil
 			}
 		}
 
 		if lastErr == nil {
-			return gomcp.NewToolResultError("failed to read memory file: no memory manager available"), nil
+			return toolErrWithHint("failed to read memory file", nil, readPathHint(ref)), nil
 		}
-		return gomcp.NewToolResultError("failed to read memory file: " + lastErr.Error()), nil
+		return toolErrWithHint("failed to read memory file", lastErr, readPathHint(ref)), nil
 	}
 }
 
@@ -369,7 +399,11 @@ func handleMemoryList(globalMgr *memory.Manager, repoMgr *memory.Manager, legacy
 
 		files, err := listFromMgr(globalMgr)
 		if err != nil && !(ref != "" && isRefLookupError(err)) {
-			return gomcp.NewToolResultError("failed to list memory: " + err.Error()), nil
+			return toolErrWithHint(
+				"failed to list memory",
+				err,
+				`If using ref, verify it with memory_branches(scope="repo"), or retry without ref.`,
+			), nil
 		}
 		if err != nil {
 			files = nil
@@ -435,7 +469,11 @@ func handleMemoryTree(globalMgr *memory.Manager, repoMgr *memory.Manager, legacy
 
 		entries, err := treeFromMgr(globalMgr)
 		if err != nil && !(ref != "" && isRefLookupError(err)) {
-			return gomcp.NewToolResultError("failed to get memory tree: " + err.Error()), nil
+			return toolErrWithHint(
+				"failed to get memory tree",
+				err,
+				`If using ref, verify it with memory_branches(scope="repo"), or retry without ref.`,
+			), nil
 		}
 		if err != nil {
 			entries = nil
@@ -505,7 +543,7 @@ func handleMemoryHistory(globalMgr *memory.Manager, repoMgr *memory.Manager, leg
 		count := parseOptionalIntArg(req, "count", 10)
 
 		if scope != "all" && scope != "global" && scope != "repo" {
-			return gomcp.NewToolResultError("invalid scope; expected one of: all, global, repo"), nil
+			return gomcp.NewToolResultError(`invalid scope; expected one of: all, global, repo. Example: memory_history(scope="repo", count=10)`), nil
 		}
 
 		type source struct {
@@ -548,7 +586,11 @@ func handleMemoryHistory(globalMgr *memory.Manager, repoMgr *memory.Manager, leg
 				if branch != "" && isRefLookupError(err) {
 					continue
 				}
-				return gomcp.NewToolResultError("failed to get history: " + err.Error()), nil
+				return toolErrWithHint(
+					"failed to get history",
+					err,
+					`Verify branch/ref with memory_branches(scope="repo"), then retry memory_history(..., branch="...").`,
+				), nil
 			}
 			for _, e := range entries {
 				key := fmt.Sprintf("%s\x00%s", src.scope, e.SHA)
@@ -614,10 +656,10 @@ func handleMemoryAppend(globalMgr *memory.Manager, repoMgr *memory.Manager, lega
 		content := req.GetString("content", "")
 		branch := req.GetString("branch", "")
 		if relPath == "" {
-			return gomcp.NewToolResultError("missing required parameter: path"), nil
+			return missingParamErr("path", `memory_append(path="notes.md", content="new note")`), nil
 		}
 		if content == "" {
-			return gomcp.NewToolResultError("missing required parameter: content"), nil
+			return missingParamErr("content", `memory_append(path="notes.md", content="new note")`), nil
 		}
 
 		candidates := pathManagerCandidates(relPath, globalMgr, repoMgr, legacyRepoMgr)
@@ -630,7 +672,11 @@ func handleMemoryAppend(globalMgr *memory.Manager, repoMgr *memory.Manager, lega
 				lastErr = err
 				if i == len(candidates)-1 || !shouldTryRepoFallback(err) {
 					Log("memory_append error: %v", err)
-					return gomcp.NewToolResultError("failed to append: " + err.Error()), nil
+					return toolErrWithHint(
+						"failed to append",
+						err,
+						`Use path for an existing file. For repo disambiguation use path="repos/<repo-slug>/file.md".`,
+					), nil
 				}
 				continue
 			}
@@ -639,9 +685,17 @@ func handleMemoryAppend(globalMgr *memory.Manager, repoMgr *memory.Manager, lega
 
 		if lastErr != nil {
 			Log("memory_append error: %v", lastErr)
-			return gomcp.NewToolResultError("failed to append: " + lastErr.Error()), nil
+			return toolErrWithHint(
+				"failed to append",
+				lastErr,
+				`Use path for an existing file. For repo disambiguation use path="repos/<repo-slug>/file.md".`,
+			), nil
 		}
-		return gomcp.NewToolResultError("failed to append: no memory manager available"), nil
+		return toolErrWithHint(
+			"failed to append",
+			nil,
+			`Use path for an existing file. For repo disambiguation use path="repos/<repo-slug>/file.md".`,
+		), nil
 	}
 }
 
@@ -653,15 +707,15 @@ func handleMemoryMove(globalMgr *memory.Manager, repoMgr *memory.Manager, legacy
 		to := req.GetString("to", "")
 		branch := req.GetString("branch", "")
 		if from == "" || to == "" {
-			return gomcp.NewToolResultError("missing required parameters: from, to"), nil
+			return gomcp.NewToolResultError(`missing required parameters: from, to. Example: memory_move(from="notes.md", to="archive/notes.md")`), nil
 		}
 		fromMgr, fromRel := routePathToManager(from, globalMgr, repoMgr, legacyRepoMgr)
 		toMgr, toRel := routePathToManager(to, globalMgr, repoMgr, legacyRepoMgr)
 		if fromMgr != toMgr {
-			return gomcp.NewToolResultError("cross-scope move is not supported"), nil
+			return gomcp.NewToolResultError(`cross-scope move is not supported. Hint: use the same store for both paths, e.g. repos/<repo-slug>/from.md -> repos/<repo-slug>/to.md`), nil
 		}
 		if err := fromMgr.MoveOnBranch(fromRel, toRel, branch); err != nil {
-			return gomcp.NewToolResultError("failed to move: " + err.Error()), nil
+			return toolErrWithHint("failed to move", err, `Use "from" and "to" as existing/target file paths within the same store.`), nil
 		}
 		return gomcp.NewToolResultText(fmt.Sprintf("Moved %s -> %s.", from, to)), nil
 	}
@@ -674,11 +728,11 @@ func handleMemoryDelete(globalMgr *memory.Manager, repoMgr *memory.Manager, lega
 		relPath := req.GetString("path", "")
 		branch := req.GetString("branch", "")
 		if relPath == "" {
-			return gomcp.NewToolResultError("missing required parameter: path"), nil
+			return missingParamErr("path", `memory_delete(path="notes.md")`), nil
 		}
 		mgr, scopedPath := routePathToManager(relPath, globalMgr, repoMgr, legacyRepoMgr)
 		if err := mgr.DeleteOnBranch(scopedPath, branch); err != nil {
-			return gomcp.NewToolResultError("failed to delete: " + err.Error()), nil
+			return toolErrWithHint("failed to delete", err, `Use path for an existing file. Use repos/<repo-slug>/... to target repo memory explicitly.`), nil
 		}
 		return gomcp.NewToolResultText(fmt.Sprintf("Deleted %s.", relPath)), nil
 	}
@@ -691,11 +745,11 @@ func handleMemoryPin(globalMgr *memory.Manager, repoMgr *memory.Manager, legacyR
 		relPath := req.GetString("path", "")
 		branch := req.GetString("branch", "")
 		if relPath == "" {
-			return gomcp.NewToolResultError("missing required parameter: path"), nil
+			return missingParamErr("path", `memory_pin(path="conventions.md")`), nil
 		}
 		mgr, scopedPath := routePathToManager(relPath, globalMgr, repoMgr, legacyRepoMgr)
 		if err := mgr.PinOnBranch(scopedPath, branch); err != nil {
-			return gomcp.NewToolResultError("failed to pin: " + err.Error()), nil
+			return toolErrWithHint("failed to pin", err, `Use path for an existing file. This moves it to system/<name>.md.`), nil
 		}
 		return gomcp.NewToolResultText(fmt.Sprintf("Pinned %s to system/.", relPath)), nil
 	}
@@ -708,11 +762,11 @@ func handleMemoryUnpin(globalMgr *memory.Manager, repoMgr *memory.Manager, legac
 		relPath := req.GetString("path", "")
 		branch := req.GetString("branch", "")
 		if relPath == "" {
-			return gomcp.NewToolResultError("missing required parameter: path"), nil
+			return missingParamErr("path", `memory_unpin(path="system/conventions.md")`), nil
 		}
 		mgr, scopedPath := routePathToManager(relPath, globalMgr, repoMgr, legacyRepoMgr)
 		if err := mgr.UnpinOnBranch(scopedPath, branch); err != nil {
-			return gomcp.NewToolResultError("failed to unpin: " + err.Error()), nil
+			return toolErrWithHint("failed to unpin", err, `Path must currently be under system/, e.g. system/conventions.md.`), nil
 		}
 		return gomcp.NewToolResultText(fmt.Sprintf("Unpinned %s from system/.", relPath)), nil
 	}
@@ -742,7 +796,7 @@ func handleMemoryBranches(globalMgr *memory.Manager, repoMgr *memory.Manager, le
 			scope = "repo"
 		}
 		if scope != "repo" && scope != "global" && scope != "all" {
-			return gomcp.NewToolResultError("invalid scope; expected one of: all, global, repo"), nil
+			return gomcp.NewToolResultError(`invalid scope; expected one of: all, global, repo. Example: memory_branches(scope="repo")`), nil
 		}
 
 		type source struct {
@@ -781,7 +835,7 @@ func handleMemoryBranches(globalMgr *memory.Manager, repoMgr *memory.Manager, le
 			}
 			info, err := src.mgr.GitBranchInfo()
 			if err != nil {
-				return gomcp.NewToolResultError("failed to list branches: " + err.Error()), nil
+				return toolErrWithHint("failed to list branches", err, `Retry with scope="repo" or scope="global" to isolate the failing store.`), nil
 			}
 			out = append(out, memoryBranchState{
 				Scope:        src.scope,
@@ -808,11 +862,11 @@ func handleMemoryBranchCreate(globalMgr *memory.Manager, repoMgr *memory.Manager
 		fromRef := req.GetString("from_ref", "")
 		scope := req.GetString("scope", "")
 		if strings.TrimSpace(name) == "" {
-			return gomcp.NewToolResultError("missing required parameter: name"), nil
+			return missingParamErr("name", `memory_branch_create(name="feature/memory", scope="repo")`), nil
 		}
 		mgr := resolveScopedManager(scope, globalMgr, repoMgr)
 		if err := mgr.CreateBranch(name, fromRef); err != nil {
-			return gomcp.NewToolResultError("failed to create branch: " + err.Error()), nil
+			return toolErrWithHint("failed to create branch", err, `Check branch name format and from_ref, e.g. from_ref="main".`), nil
 		}
 		return gomcp.NewToolResultText(fmt.Sprintf("Created branch %s.", name)), nil
 	}
@@ -825,11 +879,11 @@ func handleMemoryBranchDelete(globalMgr *memory.Manager, repoMgr *memory.Manager
 		scope := req.GetString("scope", "")
 		force := parseOptionalBoolArg(req, "force", false)
 		if strings.TrimSpace(name) == "" {
-			return gomcp.NewToolResultError("missing required parameter: name"), nil
+			return missingParamErr("name", `memory_branch_delete(name="feature/memory", force=true, scope="repo")`), nil
 		}
 		mgr := resolveScopedManager(scope, globalMgr, repoMgr)
 		if err := mgr.DeleteBranch(name, force); err != nil {
-			return gomcp.NewToolResultError("failed to delete branch: " + err.Error()), nil
+			return toolErrWithHint("failed to delete branch", err, `Set force=true if the branch is not fully merged.`), nil
 		}
 		return gomcp.NewToolResultText(fmt.Sprintf("Deleted branch %s.", name)), nil
 	}
@@ -843,11 +897,11 @@ func handleMemoryBranchMerge(globalMgr *memory.Manager, repoMgr *memory.Manager)
 		strategy := req.GetString("strategy", "")
 		scope := req.GetString("scope", "")
 		if strings.TrimSpace(source) == "" {
-			return gomcp.NewToolResultError("missing required parameter: source"), nil
+			return missingParamErr("source", `memory_branch_merge(source="feature/memory", target="main", strategy="ff-only", scope="repo")`), nil
 		}
 		mgr := resolveScopedManager(scope, globalMgr, repoMgr)
 		if err := mgr.MergeBranch(source, target, strategy); err != nil {
-			return gomcp.NewToolResultError("failed to merge branch: " + err.Error()), nil
+			return toolErrWithHint("failed to merge branch", err, `Try strategy="no-ff" or resolve conflicts manually, then retry.`), nil
 		}
 		if strings.TrimSpace(target) == "" {
 			target = "(default)"
@@ -864,7 +918,7 @@ func handleMemoryDiff(globalMgr *memory.Manager, repoMgr *memory.Manager, legacy
 		path := req.GetString("path", "")
 		scope := req.GetString("scope", "")
 		if strings.TrimSpace(baseRef) == "" || strings.TrimSpace(headRef) == "" {
-			return gomcp.NewToolResultError("missing required parameters: base_ref, head_ref"), nil
+			return gomcp.NewToolResultError(`missing required parameters: base_ref, head_ref. Example: memory_diff(base_ref="main", head_ref="feature/memory", scope="repo")`), nil
 		}
 
 		mgr := resolveScopedManager(scope, globalMgr, repoMgr)
@@ -897,14 +951,14 @@ func handleMemoryDiff(globalMgr *memory.Manager, repoMgr *memory.Manager, legacy
 			}
 			lastErr = err
 			if i == len(candidates)-1 || !shouldTryRepoFallback(err) {
-				return gomcp.NewToolResultError("failed to get diff: " + err.Error()), nil
+				return toolErrWithHint("failed to get diff", err, `Verify refs with memory_branches(scope="repo"). Use path="repos/<repo-slug>/file.md" to target repo memory explicitly.`), nil
 			}
 		}
 		if err != nil {
 			if lastErr != nil {
-				return gomcp.NewToolResultError("failed to get diff: " + lastErr.Error()), nil
+				return toolErrWithHint("failed to get diff", lastErr, `Verify refs with memory_branches(scope="repo").`), nil
 			}
-			return gomcp.NewToolResultError("failed to get diff: no memory manager available"), nil
+			return toolErrWithHint("failed to get diff", nil, `No memory manager available for this scope/path.`), nil
 		}
 		if strings.TrimSpace(diff) == "" {
 			return gomcp.NewToolResultText("(no diff)"), nil

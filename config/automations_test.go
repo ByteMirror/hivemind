@@ -128,3 +128,17 @@ func TestNextRunTime_IntervalBased(t *testing.T) {
 		})
 	}
 }
+
+func TestNewAutomation_SetsProgramAndRepoPath(t *testing.T) {
+	auto, err := NewAutomation("Nightly", "Check CI", "daily", " codex ", " /repos/hivemind ")
+	if err != nil {
+		t.Fatalf("NewAutomation returned error: %v", err)
+	}
+
+	if auto.Program != "codex" {
+		t.Fatalf("Program = %q, want %q", auto.Program, "codex")
+	}
+	if auto.RepoPath != "/repos/hivemind" {
+		t.Fatalf("RepoPath = %q, want %q", auto.RepoPath, "/repos/hivemind")
+	}
+}

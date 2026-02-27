@@ -43,9 +43,7 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 	tmuxSession.ProgressFunc = func(stage int, desc string) {
 		i.setLoadingProgress(tmuxStageOffset+stage, desc)
 	}
-	if i.InitialPrompt != "" && isClaudeProgram(i.Program) {
-		tmuxSession.AppendArgs = append(tmuxSession.AppendArgs, "-p", i.InitialPrompt)
-	}
+	i.configureInitialPromptArg(tmuxSession)
 	i.tmuxSession = tmuxSession
 
 	if firstTimeSetup {
@@ -134,9 +132,25 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 		}
 	}
 
+	i.sendInitialPromptViaTmux()
 	i.SetStatus(Running)
 
 	return nil
+}
+
+func (i *Instance) configureInitialPromptArg(tmuxSession *tmux.TmuxSession) {
+	if i.InitialPrompt != "" && isClaudeProgram(i.Program) {
+		tmuxSession.AppendArgs = append(tmuxSession.AppendArgs, "-p", i.InitialPrompt)
+	}
+}
+
+func (i *Instance) sendInitialPromptViaTmux() {
+	if i.InitialPrompt == "" || isClaudeProgram(i.Program) || i.tmuxSession == nil {
+		return
+	}
+	if err := i.tmuxSession.SendTextViaTmux(i.InitialPrompt); err != nil {
+		log.WarningLog.Printf("failed to send initial prompt for %s: %v", i.Title, err)
+	}
 }
 
 // StartInSharedWorktree starts the instance using a topic's shared worktree.
@@ -162,6 +176,7 @@ func (i *Instance) StartInSharedWorktree(worktree *git.GitWorktree, branch strin
 	tmuxSession.ProgressFunc = func(stage int, desc string) {
 		i.setLoadingProgress(1+stage, desc)
 	}
+	i.configureInitialPromptArg(tmuxSession)
 	i.tmuxSession = tmuxSession
 
 	// Ensure the shared worktree directory exists — it may have been
@@ -202,6 +217,7 @@ func (i *Instance) StartInSharedWorktree(worktree *git.GitWorktree, branch strin
 	}
 
 	i.started.Store(true)
+	i.sendInitialPromptViaTmux()
 	i.SetStatus(Running)
 	return nil
 }
@@ -228,6 +244,7 @@ func (i *Instance) StartInMainRepo() error {
 	tmuxSession.ProgressFunc = func(stage int, desc string) {
 		i.setLoadingProgress(1+stage, desc)
 	}
+	i.configureInitialPromptArg(tmuxSession)
 	i.tmuxSession = tmuxSession
 
 	if isClaudeProgram(i.Program) {
@@ -257,6 +274,7 @@ func (i *Instance) StartInMainRepo() error {
 		return setupErr
 	}
 
+	i.sendInitialPromptViaTmux()
 	i.SetStatus(Running)
 	return nil
 }

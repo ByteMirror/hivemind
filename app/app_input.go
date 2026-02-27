@@ -1971,7 +1971,17 @@ func (m *home) handleAutomationsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "n":
-		m.autoForm = ui.NewAutomationForm("", "", "", false)
+		defaultRepoPath := m.defaultAutomationRepoPath()
+		m.autoForm = ui.NewAutomationForm(
+			"",
+			"",
+			"",
+			m.defaultAutomationProgram(),
+			defaultRepoPath,
+			m.automationAgentOptions(),
+			m.automationRepoOptionsWithSelected(defaultRepoPath),
+			false,
+		)
 		m.autoEditIdx = -1
 		m.state = stateNewAutomation
 		return m, nil
@@ -1982,7 +1992,17 @@ func (m *home) handleAutomationsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		auto := m.automations[m.autoSelectedIdx]
-		m.autoForm = ui.NewAutomationForm(auto.Name, auto.Schedule, auto.Instructions, true)
+		selectedRepoPath := m.resolveAutomationRepoPath(auto)
+		m.autoForm = ui.NewAutomationForm(
+			auto.Name,
+			auto.Schedule,
+			auto.Instructions,
+			m.resolveAutomationProgram(auto),
+			selectedRepoPath,
+			m.automationAgentOptions(),
+			m.automationRepoOptionsWithSelected(selectedRepoPath),
+			true,
+		)
 		m.autoEditIdx = m.autoSelectedIdx
 		m.state = stateNewAutomation
 		return m, nil
@@ -2065,9 +2085,17 @@ func (m *home) handleNewAutomationKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Submitted — validate and save.
-	name, schedule, instructions := m.autoForm.GetValues()
+	name, schedule, instructions, program, repoPath := m.autoForm.GetValues()
 	if name == "" {
 		m.toastManager.Error("Name cannot be empty")
+		return m, m.toastTickCmd()
+	}
+	if program == "" {
+		m.toastManager.Error("Agent cannot be empty")
+		return m, m.toastTickCmd()
+	}
+	if repoPath == "" {
+		m.toastManager.Error("Project cannot be empty")
 		return m, m.toastTickCmd()
 	}
 	if _, err := config.ParseSchedule(schedule); err != nil {
@@ -2080,6 +2108,8 @@ func (m *home) handleNewAutomationKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		auto := m.automations[m.autoEditIdx]
 		auto.Name = name
 		auto.Instructions = instructions
+		auto.Program = program
+		auto.RepoPath = repoPath
 		// Recompute NextRun when the schedule changes.
 		if auto.Schedule != schedule {
 			auto.Schedule = schedule
@@ -2093,7 +2123,7 @@ func (m *home) handleNewAutomationKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.toastManager.Info(fmt.Sprintf("Automation %q updated", name))
 	} else {
 		// Creating new automation.
-		auto, err := config.NewAutomation(name, instructions, schedule)
+		auto, err := config.NewAutomation(name, instructions, schedule, program, repoPath)
 		if err != nil {
 			m.toastManager.Error("Failed to create automation: " + err.Error())
 			return m, m.toastTickCmd()
