@@ -45,11 +45,34 @@ jobs:
         with:
           go-version: '1.23'
 
+      - name: Check if tag release is already published
+        id: release_state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+
+          if gh release view "$TAG_NAME" --json isDraft >/dev/null 2>&1; then
+            IS_DRAFT=$(gh release view "$TAG_NAME" --json isDraft --jq '.isDraft')
+            if [ "$IS_DRAFT" = "false" ]; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "Release $TAG_NAME is already published. Skipping GoReleaser."
+              exit 0
+            fi
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
       - name: Run GoReleaser
+        if: steps.release_state.outputs.skip != 'true'
         uses: goreleaser/goreleaser-action@v6
         with:
-          version: latest
+          version: '~> v2'
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_REPO_TOKEN: ${{ secrets.BREW_TOKEN }}
+
+      - name: Release already published
+        if: steps.release_state.outputs.skip == 'true'
+        run: echo "Release already exists for this tag; nothing to publish."
